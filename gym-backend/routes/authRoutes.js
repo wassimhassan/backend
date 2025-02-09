@@ -2,7 +2,7 @@ const express = require("express"); //Creates a separate router for authenticati
 const bcrypt = require("bcryptjs"); // Used for hashing passwords.
 const jwt = require("jsonwebtoken"); //Used for user authentication.
 const User = require("../models/User");
-const nodemailer = require("nodemailer");
+const asyncHandler = require("express-async-handler");
 
 const router = express.Router();
 require("dotenv").config();
@@ -120,5 +120,75 @@ router.post("/confirm-reset", async (req, res) => {
         res.status(400).json({ message: "Invalid or expired token" });
     }
 });
+
+//login route
+router.post(
+    "/login",
+    asyncHandler(async (req, res) => {
+        const { email, password } = req.body;
+
+        // Find user by email
+        let user = await User.findOne({ email });
+        if (!user) {
+            return res.status(400).json({ message: "Invalid email or password" });
+        }
+
+        // Verify password
+        const isPasswordMatch = await bcrypt.compare(password, user.password);
+        if (!isPasswordMatch) {
+            return res.status(400).json({ message: "Invalid email or password" });
+        }
+
+        // Generate JWT token
+        const token = jwt.sign(
+            { id: user._id, email: user.email },
+            process.env.JWT_SECRET,
+            { expiresIn: "1d" }
+        );
+
+        res.status(200).json({
+            message: "Login successful",
+            user: { id: user._id, email: user.email },
+            token,
+        });
+    })
+);
+
+// Middleware to verify JWT
+const verifyToken = (req, res, next) => {
+    const token = req.header("Authorization")?.split(" ")[1];
+    if (!token) {
+        return res.status(401).json({ message: "Access denied. No token provided." });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = decoded;
+        next();
+    } catch (err) {
+        res.status(403).json({ message: "Invalid or expired token." });
+    }
+};
+
+// Get User Profile Route
+router.get(
+    "/profile",
+    verifyToken,
+    asyncHandler(async (req, res) => {
+        const user = await User.findById(req.user.id).select("-password");
+        if (!user) {
+            return res.status(404).json({ message: "User not found." });
+        }
+        res.status(200).json(user);
+    })
+);
+
+// Logout Route
+router.post(
+    "/logout",
+    asyncHandler(async (req, res) => {
+        res.status(200).json({ message: "Logged out successfully. Remove token from frontend storage." });
+    })
+);
 
 module.exports = router;
