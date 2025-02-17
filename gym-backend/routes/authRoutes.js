@@ -10,18 +10,41 @@ require("dotenv").config();
 // User Signup Route
 router.post("/signup", async (req, res) => {
     try {
-        const { username, email, password } = req.body;
+        const { 
+            username, 
+            email, 
+            password, 
+            height, 
+            weight, 
+            dateOfBirth, 
+            phoneNumber, 
+            workoutDaysPerWeek, 
+            goal, 
+            sex 
+        } = req.body;
 
-        // Check if user already exists
-        const existingUser = await User.findOne({ email });
-        if (existingUser) return res.status(400).json({ message: "User already exists" });
+        // Check if username or email already exists
+        const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+        if (existingUser) return res.status(400).json({ message: "Username or Email already exists" });
 
         // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // Create user
-        const newUser = new User({ username, email, password: hashedPassword });
+        // Create user with optional fields (default values used if fields are missing)
+        const newUser = new User({
+            username,
+            email,
+            password: hashedPassword,
+            height: height || 170, // Default: 170 cm
+            weight: weight || 70, // Default: 70 kg
+            dateOfBirth: dateOfBirth || null, // No default value
+            phoneNumber: phoneNumber || "", // Default: empty string
+            workoutDaysPerWeek: workoutDaysPerWeek || 3, // Default: 3 days per week
+            goal: goal || "none", // Default: "none"
+            sex: ["male", "female"].includes(sex) ? sex : undefined // No default value, only allows valid options
+        });
+
         await newUser.save();
 
         // Create JWT token
@@ -180,6 +203,48 @@ router.get(
             return res.status(404).json({ message: "User not found." });
         }
         res.status(200).json(user);
+    })
+);
+
+// Update User Profile Route
+router.put(
+    "/profile",
+    verifyToken,
+    asyncHandler(async (req, res) => {
+        const { name, height, weight, dateOfBirth, phoneNumber, workoutDaysPerWeek, goal, sex } = req.body;
+
+        // Find user by ID
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: "User not found." });
+        }
+
+        // Update fields if provided
+        if (name) user.name = name;
+        if (height) user.height = height;
+        if (weight) user.weight = weight;
+        if (dateOfBirth) user.dateOfBirth = dateOfBirth;
+        if (phoneNumber) user.phoneNumber = phoneNumber;
+        if (workoutDaysPerWeek) user.workoutDaysPerWeek = workoutDaysPerWeek;
+        if (goal) user.goal = goal;
+        if (["male", "female"].includes(sex)) user.sex = sex;
+
+        await user.save();
+
+        res.status(200).json({ message: "Profile updated successfully", user });
+    })
+);
+
+// Check if user is authenticated
+router.get(
+    "/auth-check",
+    verifyToken,
+    asyncHandler(async (req, res) => {
+        const user = await User.findById(req.user.id).select("-password");
+        if (!user) {
+            return res.status(404).json({ message: "User not found." });
+        }
+        res.status(200).json({ message: "Authenticated", user });
     })
 );
 
