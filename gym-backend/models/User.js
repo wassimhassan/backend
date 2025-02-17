@@ -1,17 +1,9 @@
 const mongoose = require("mongoose");
 
 const UserSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true },
+    username: { type: String, unique: true, required: true},
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    name: { 
-        type: String, 
-        required: true 
-      },
-      age: { 
-        type: Number, 
-        default: 0 
-      },
       height: { 
         type: Number, // in cm 
         default: 0 
@@ -24,18 +16,13 @@ const UserSchema = new mongoose.Schema({
         type: Date, 
         default: null 
       },
-      email: { 
-        type: String, 
-        required: true, 
-        unique: true 
-      },
       phoneNumber: { 
         type: String, 
-        required: true 
+        default: ""
       },
       workoutDaysPerWeek: { 
         type: Number, 
-        default: 0 
+        default: 1
       },
       goal: { 
         type: String, 
@@ -44,7 +31,6 @@ const UserSchema = new mongoose.Schema({
       sex: { 
         type: String, 
         enum: ["male", "female"], 
-        default: "male" 
       }
 }, { timestamps: true });
 
