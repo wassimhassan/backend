@@ -1,11 +1,19 @@
 const express = require("express"); //Creates a separate router for authentication.
 const bcrypt = require("bcryptjs"); // Used for hashing passwords.
 const jwt = require("jsonwebtoken"); //Used for user authentication.
+const nodemailer = require("nodemailer"); // Import Nodemailer for sending emails.
 const User = require("../models/User");
 const asyncHandler = require("express-async-handler");
 
 const router = express.Router();
 require("dotenv").config();
+
+
+// Function to validate password strength
+const isValidPassword = (password) => {
+    const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d)[A-Za-z\d]{8,}$/; 
+    return passwordRegex.test(password);
+};
 
 // User Signup Route
 router.post("/signup", async (req, res) => {
@@ -23,6 +31,13 @@ router.post("/signup", async (req, res) => {
             sex 
         } = req.body;
 
+         // Validate password
+         if (!isValidPassword(password)) {
+            return res.status(400).json({
+                message: "Password must be at least 8 characters long and include letters and numbers."
+            });
+        }
+
         // Check if username or email already exists
         const existingUser = await User.findOne({ $or: [{ email }, { username }] });
         if (existingUser) return res.status(400).json({ message: "Username or Email already exists" });
@@ -36,8 +51,8 @@ router.post("/signup", async (req, res) => {
             username,
             email,
             password: hashedPassword,
-            height: height || 170, // Default: 170 cm
-            weight: weight || 70, // Default: 70 kg
+            height: height || 0, 
+            weight: weight || 0, 
             dateOfBirth: dateOfBirth || null, // No default value
             phoneNumber: phoneNumber || "", // Default: empty string
             workoutDaysPerWeek: workoutDaysPerWeek || 3, // Default: 3 days per week
@@ -121,10 +136,17 @@ router.post("/confirm-reset", async (req, res) => {
             return res.status(400).json({ message: "Token and new password are required" });
         }
 
+         // Validate new password
+         if (!isValidPassword(newPassword)) {
+            return res.status(400).json({
+                message: "Password must be at least 8 characters long and include letters and numbers."
+            });
+        }
+
         // Verify the reset token
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        // Find user by ID in the token
+        // Find user
         const user = await User.findById(decoded.userId);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
