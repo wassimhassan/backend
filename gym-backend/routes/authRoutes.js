@@ -15,6 +15,37 @@ const isValidPassword = (password) => {
     return passwordRegex.test(password);
 };
 
+
+router.post("/validate-credentials", async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        // Validate password strength
+        if (!isValidPassword(password)) {
+            return res.status(400).json({
+                field: "password",
+                message: "Password must be at least 8 characters long and include letters and numbers."
+            });
+        }
+
+        // Check if email already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({
+                field: "email",
+                message: "Email already exists. Please use another email."
+            });
+        }
+
+        res.status(200).json({ message: "Credentials are valid" });
+
+    } catch (err) {
+        console.error("Validation error:", err);
+        res.status(500).json({ message: "Server error. Please try again later." });
+    }
+});
+
+
 // User Signup Route
 router.post("/signup", async (req, res) => {
     try {
@@ -65,9 +96,11 @@ router.post("/signup", async (req, res) => {
         // Create JWT token
         const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
-        res.status(201).json({ user: newUser, token });
+        res.status(201).json({ message: "User registered successfully", token });
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("Signup error:", err);
+        res.status(500).json({ message: "Server error. Please try again later." });
     }
 });
 
