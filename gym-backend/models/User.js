@@ -31,7 +31,11 @@ const UserSchema = new mongoose.Schema({
       sex: { 
         type: String, 
         enum: ["male", "female"], 
-      }
+      },
+      profilePicture: { 
+        type: String, 
+        default: "/uploads/cam.jpg"
+      },
 }, { timestamps: true });
 
 module.exports = mongoose.model("User", UserSchema);

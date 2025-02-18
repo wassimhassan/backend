@@ -13,6 +13,7 @@ app.use(cors({
     credentials: true
 }));
 
+app.use("/uploads", express.static("uploads"));
 app.use(express.json()); // enables parsing JSON in requests.
 
 // Prevent Mongoose Deprecation Warnings
