@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs"); // Used for hashing passwords.
 const jwt = require("jsonwebtoken"); //Used for user authentication.
 const nodemailer = require("nodemailer"); // Import Nodemailer for sending emails.
 const User = require("../models/User");
+const multer = require("multer");
 const asyncHandler = require("express-async-handler");
 
 const router = express.Router();
@@ -310,5 +311,70 @@ router.post(
         res.status(200).json({ message: "Logged out successfully. Remove token from frontend storage." });
     })
 );
+
+// Configure Multer for Image Uploads
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, "uploads/"); // Save files inside 'uploads' folder
+    },
+    filename: (req, file, cb) => {
+        cb(null, `${req.user.id}-${Date.now()}-${file.originalname}`);
+    }
+});
+
+const upload = multer({ storage });
+
+// Upload Profile Picture
+router.post("/upload-profile-picture", verifyToken, upload.single("profilePicture"), async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        user.profilePicture = `/uploads/${req.file.filename}`;
+        await user.save();
+
+        res.status(200).json({ message: "Profile picture uploaded", profilePicture: user.profilePicture });
+    } catch (error) {
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+});
+
+// Update Profile Picture
+router.put("/update-profile-picture", verifyToken, upload.single("profilePicture"), async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        user.profilePicture = `/uploads/${req.file.filename}`;
+        await user.save();
+
+        res.status(200).json({ message: "Profile picture updated", profilePicture: user.profilePicture });
+    } catch (error) {
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+});
+
+// Remove Profile Picture (Reset to Default `cam.jpg`)
+router.delete("/remove-profile-picture", verifyToken, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Reset to default profile picture (cam.jpg)
+        user.profilePicture = "/uploads/cam.jpg";
+        await user.save();
+
+        res.status(200).json({ message: "Profile picture removed", profilePicture: user.profilePicture });
+    } catch (error) {
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+});
+
 
 module.exports = router;
