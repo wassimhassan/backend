@@ -18,16 +18,18 @@ const UserSchema = new mongoose.Schema({
       },
       phoneNumber: { 
         type: String, 
+        unique: false,
         default: ""
       },
+
       workoutDaysPerWeek: { 
         type: Number, 
         default: 1
       },
       goal: { 
-        type: String, 
-        default: "none"  // e.g., muscle gain, weight loss, endurance, etc.
-      },
+      type: [String], 
+      default: ["none"] }
+      ,
       sex: { 
         type: String, 
         enum: ["male", "female"], 

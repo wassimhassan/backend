@@ -19,7 +19,13 @@ const isValidPassword = (password) => {
 
 router.post("/validate-credentials", async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const {username, email, password } = req.body;
+
+        if (!username || !email || !password) {
+            return res.status(400).json({
+                message: "Username, email, and password are required."
+            });
+        }
 
         // Validate password strength
         if (!isValidPassword(password)) {
@@ -28,6 +34,15 @@ router.post("/validate-credentials", async (req, res) => {
                 message: "Password must be at least 8 characters long and include letters and numbers."
             });
         }
+
+           // Check if username already exists
+           const existingUsername = await User.findOne({ username });
+           if (existingUsername) {
+               return res.status(400).json({
+                   field: "username",
+                   message: "Username already exists. Please choose another one."
+               });
+           }
 
         // Check if email already exists
         const existingUser = await User.findOne({ email });
@@ -63,17 +78,7 @@ router.post("/signup", async (req, res) => {
             sex 
         } = req.body;
 
-         // Validate password
-         if (!isValidPassword(password)) {
-            return res.status(400).json({
-                message: "Password must be at least 8 characters long and include letters and numbers."
-            });
-        }
-
-        // Check if username or email already exists
-        const existingUser = await User.findOne({ $or: [{ email }, { username }] });
-        if (existingUser) return res.status(400).json({ message: "Username or Email already exists" });
-
+    
         // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
@@ -88,7 +93,7 @@ router.post("/signup", async (req, res) => {
             dateOfBirth: dateOfBirth || null, // No default value
             phoneNumber: phoneNumber || "", // Default: empty string
             workoutDaysPerWeek: workoutDaysPerWeek || 3, // Default: 3 days per week
-            goal: goal || "none", // Default: "none"
+            goal: Array.isArray(goal) ? goal : [goal],
             sex: ["male", "female"].includes(sex) ? sex : undefined // No default value, only allows valid options
         });
 
