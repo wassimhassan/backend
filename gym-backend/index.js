@@ -33,7 +33,10 @@ app.get("/", (req, res) => {
 
 // Import routes
 const authRoutes = require("./routes/authRoutes");
+const trainerRoutes = require("./routes/trainerRoutes");
 app.use("/api/auth", authRoutes);
+app.use("/api/trainers", trainerRoutes);
+
 
 // 404 Route Handler (For undefined routes)
 app.use((req, res) => {
