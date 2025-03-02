@@ -80,34 +80,33 @@ router.post("/trainer/login", async (req, res) => {
 });
 
 // ✅ Set Trainer Availability Route (POST)
-router.post("/availability", verifyToken, async (req, res) => {
+router.post("/availability", async (req, res) => {
     try {
         const { trainerId, availableSlots } = req.body;
 
-        // Validate required fields
-        if (!trainerId || !availableSlots || !Array.isArray(availableSlots)) {
-            return res.status(400).json({ message: "Trainer ID and available slots are required." });
+        if (!trainerId || !availableSlots || availableSlots.length === 0) {
+            return res.status(400).json({ message: "TrainerId and available slots are required." });
         }
 
-        // Ensure the trainer exists
-        const trainerExists = await Trainer.findById(trainerId);
-        if (!trainerExists) {
-            return res.status(404).json({ message: "Trainer not found." });
+        // Convert session times from strings to Date objects
+        const formattedSlots = availableSlots.map(slot => ({
+            day: slot.day,
+            time: slot.time.map(timeString => new Date(timeString)) // ✅ Convert to Date
+        }));
+
+        let availability = await TrainerAvailability.findOne({ trainerId });
+
+        if (availability) {
+            availability.availableSlots = formattedSlots;
+            await availability.save();
+        } else {
+            availability = new TrainerAvailability({ trainerId, availableSlots: formattedSlots });
+            await availability.save();
         }
 
-        // Update or create the availability
-        const updatedAvailability = await TrainerAvailability.findOneAndUpdate(
-            { trainerId },
-            { trainerId, availableSlots },
-            { new: true, upsert: true } // Upsert ensures it creates a new record if none exists
-        );
-
-        res.status(201).json({
-            message: "Availability updated successfully!",
-            availability: updatedAvailability
-        });
+        res.status(201).json({ message: "Availability updated successfully!", availability });
     } catch (error) {
-        console.error("Error while setting availability:", error);
+        console.error("Error setting availability:", error);
         res.status(500).json({ message: "Server error while setting availability.", error: error.message });
     }
 });
@@ -162,57 +161,6 @@ router.get("/trainer/:id/clients", verifyToken, async (req, res) => {
         res.status(500).json({ message: "Error retrieving clients." });
     }
 });
-
-router.post("/book-session", verifyToken, async (req, res) => {
-    try {
-        const { trainerId, clientId, day, time } = req.body;
-
-        if (!trainerId || !clientId || !day || !time) {
-            return res.status(400).json({ message: "All fields (trainerId, clientId, day, time) are required." });
-        }
-
-        // Check if trainer exists
-        const trainer = await Trainer.findById(trainerId);
-        if (!trainer) {
-            return res.status(404).json({ message: "Trainer not found." });
-        }
-
-        // Check if client exists
-        const client = await User.findById(clientId);
-        if (!client) {
-            return res.status(404).json({ message: "Client not found." });
-        }
-
-        // Fetch trainer's availability
-        const availability = await TrainerAvailability.findOne({ trainerId });
-
-        if (!availability) {
-            return res.status(400).json({ message: "Trainer has not set any availability." });
-        }
-
-        // Check if the requested day and time exist in the trainer's available slots
-        const isAvailable = availability.availableSlots.some(slot => 
-            slot.day === day && slot.time.includes(time)
-        );
-
-        if (!isAvailable) {
-            return res.status(400).json({ message: `Trainer is not available on ${day} at ${time}.` });
-        }
-
-        // Add client to trainer's client list if not already assigned
-        if (!trainer.clients.includes(clientId)) {
-            trainer.clients.push(clientId);
-        }
-
-        await trainer.save();
-
-        res.status(200).json({ message: "Session booked successfully!", trainer });
-    } catch (error) {
-        console.error("Error booking session:", error);
-        res.status(500).json({ message: "Error booking session.", error: error.message });
-    }
-});
-
 
 
  
