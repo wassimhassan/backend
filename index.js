@@ -10,7 +10,7 @@ const app = express();
 const allowedOrigins = [
     "http://localhost:3000",
     "https://frontend-omega-three-31.vercel.app",
-    "https://frontend-git-frontendvercel-wassim-hassans-projects.vercel.app"
+    "https://frontend-git-frontendvercel-wassim-hassans-projects.vercel.app",
 
   ];
   
