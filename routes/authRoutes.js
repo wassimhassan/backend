@@ -135,7 +135,7 @@ router.post("/reset-password", async (req, res) => {
         );
 
         // Construct reset password link
-        const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+        const resetLink = `${process.env.VERCEL_URL}/reset-password?token=${resetToken}`;
 
         // Configure nodemailer transporter
         const transporter = nodemailer.createTransport({
