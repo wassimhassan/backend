@@ -1,10 +1,11 @@
+// routes/trainerRoutes.js
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const mongoose = require("mongoose");
 const Trainer = require("../models/Trainer");
 const User = require("../models/User");
 const TrainerAvailability = require("../models/TrainerAvailability");
+const Booking = require("../models/Booking");
 
 const router = express.Router();
 
@@ -16,21 +17,48 @@ const verifyToken = (req, res, next) => {
     }
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.trainer = decoded;
+        req.user = decoded;
         next();
     } catch (err) {
-        res.status(403).json({ message: "Invalid or expired token." });
+        res.status(403).json({ 
+            message: "Invalid or expired token.",
+            error: err.message 
+        });
     }
 };
 
-// ✅ Trainer Signup Route
+// Trainer Signup Route
 router.post("/trainer/signup", async (req, res) => {
     try {
-        const { username, email, password, experience, certifications, specialties } = req.body;
+        const { 
+            username, 
+            email, 
+            password, 
+            experience, 
+            certifications, 
+            specialties,
+            phoneNumber,
+            height,
+            weight,
+            dateOfBirth,
+            sex
+        } = req.body;
 
-        const existingTrainer = await Trainer.findOne({ email });
+        // Comprehensive validation
+        if (password.length < 8) {
+            return res.status(400).json({ 
+                message: "Password must be at least 8 characters long." 
+            });
+        }
+
+        const existingTrainer = await Trainer.findOne({ 
+            $or: [{ email }, { username }] 
+        });
+
         if (existingTrainer) {
-            return res.status(400).json({ message: "Trainer already exists with this email." });
+            return res.status(400).json({ 
+                message: "Trainer already exists with this email or username." 
+            });
         }
 
         const salt = await bcrypt.genSalt(10);
@@ -42,17 +70,28 @@ router.post("/trainer/signup", async (req, res) => {
             password: hashedPassword,
             experience,
             certifications,
-            specialties
+            specialties,
+            phoneNumber,
+            height,
+            weight,
+            dateOfBirth,
+            sex
         });
 
         await newTrainer.save();
-        res.status(201).json({ message: "Trainer registered successfully!" });
+        res.status(201).json({ 
+            message: "Trainer registered successfully!",
+            trainerId: newTrainer._id 
+        });
     } catch (error) {
-        res.status(500).json({ message: "Server error during trainer signup." });
+        res.status(500).json({ 
+            message: "Server error during trainer signup.",
+            error: error.message 
+        });
     }
 });
 
-// ✅ Trainer Login Route
+// Trainer Login Route
 router.post("/trainer/login", async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -67,20 +106,58 @@ router.post("/trainer/login", async (req, res) => {
             return res.status(400).json({ message: "Invalid email or password" });
         }
 
-        const token = jwt.sign({ id: trainer._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
+        const token = jwt.sign(
+            { id: trainer._id, type: 'trainer', role: "trainer"}, 
+            process.env.JWT_SECRET, 
+            { expiresIn: "1d" }
+        );
 
         res.status(200).json({
             message: "Login successful",
-            trainer: { id: trainer._id, username: trainer.username, email: trainer.email },
+            trainer: { 
+                id: trainer._id, 
+                username: trainer.username, 
+                email: trainer.email,
+                role: "trainer"
+            },
             token,
         });
     } catch (error) {
-        res.status(500).json({ message: "Server error during login" });
+        res.status(500).json({ 
+            message: "Server error during login",
+            error: error.message 
+        });
     }
 });
 
-// ✅ Set Trainer Availability Route (POST)
-router.post("/availability", async (req, res) => {
+// Fetch Trainer Availability
+router.get("/availability/:trainerId", async (req, res) => {  // Removed `verifyToken`
+    try {
+        const { trainerId } = req.params;
+        if (!trainerId || trainerId.length !== 24) {
+            return res.status(400).json({ message: "Invalid trainer ID format." });
+        }
+
+        const availability = await TrainerAvailability.findOne({ trainerId });
+
+        if (!availability) {
+            console.warn(`No availability found for Trainer ID: ${trainerId}`);
+            return res.status(404).json({ message: "No availability found for this trainer." });
+        }
+
+        res.status(200).json(availability.availableSlots);
+    } catch (error) {
+        console.error("Error fetching availability:", error);
+        res.status(500).json({ 
+            message: "Server error while fetching availability.",
+            error: error.message 
+        });
+    }
+});
+
+
+// Set Trainer Availability
+router.post("/availability", verifyToken, async (req, res) => {
     try {
         const { trainerId, availableSlots } = req.body;
 
@@ -88,11 +165,24 @@ router.post("/availability", async (req, res) => {
             return res.status(400).json({ message: "TrainerId and available slots are required." });
         }
 
-        // Convert session times from strings to Date objects
-        const formattedSlots = availableSlots.map(slot => ({
-            day: slot.day,
-            time: slot.time.map(timeString => new Date(timeString)) // ✅ Convert to Date
-        }));
+        // Improved slot validation and formatting
+        const formattedSlots = availableSlots.map(slot => {
+            // Validate day and time format
+            if (!slot.day || !Array.isArray(slot.time)) {
+                throw new Error("Invalid slot format");
+            }
+
+            return {
+                day: slot.day,
+                time: slot.time.map(timeString => {
+                    const parsedTime = new Date(timeString);
+                    if (isNaN(parsedTime.getTime())) {
+                        throw new Error(`Invalid time format: ${timeString}`);
+                    }
+                    return parsedTime;
+                })
+            };
+        });
 
         let availability = await TrainerAvailability.findOne({ trainerId });
 
@@ -100,68 +190,173 @@ router.post("/availability", async (req, res) => {
             availability.availableSlots = formattedSlots;
             await availability.save();
         } else {
-            availability = new TrainerAvailability({ trainerId, availableSlots: formattedSlots });
+            availability = new TrainerAvailability({ 
+                trainerId, 
+                availableSlots: formattedSlots 
+            });
             await availability.save();
         }
 
-        res.status(201).json({ message: "Availability updated successfully!", availability });
+        res.status(201).json({ 
+            message: "Availability updated successfully!", 
+            availability 
+        });
     } catch (error) {
-        console.error("Error setting availability:", error);
-        res.status(500).json({ message: "Server error while setting availability.", error: error.message });
+        res.status(500).json({ 
+            message: "Server error while setting availability.",
+            error: error.message 
+        });
     }
 });
 
-
-// ✅ Get Trainer Availability (GET)
-router.get("/availability", async (req, res) => {
+// Remove Availability for a Specific Day
+router.delete("/availability/:trainerId/:day", verifyToken, async (req, res) => {
     try {
-        const availability = await TrainerAvailability.find().populate("trainerId", "username specialties");
-        res.status(200).json(availability);
+        const { trainerId, day } = req.params;
+
+        const availability = await TrainerAvailability.findOne({ trainerId });
+
+        if (!availability) {
+            return res.status(404).json({ message: "Trainer availability not found." });
+        }
+
+        availability.availableSlots = availability.availableSlots.filter(
+            (slot) => slot.day !== day
+        );
+
+        await availability.save();
+
+        res.status(200).json({ 
+            message: "Availability removed successfully!", 
+            availability 
+        });
     } catch (error) {
-        res.status(500).json({ message: "Server error while fetching availability." });
+        res.status(500).json({ 
+            message: "Server error while removing availability.",
+            error: error.message 
+        });
     }
 });
 
-// ✅ Get All Trainers Route (GET)
-router.get("/trainers", async (req, res) => {
+// Get All Trainers
+router.get("/trainers", verifyToken, async (req, res) => {
     try {
         const trainers = await Trainer.find().select("-password");
         res.status(200).json(trainers);
     } catch (error) {
-        res.status(500).json({ message: "Server error while fetching trainers." });
+        res.status(500).json({ 
+            message: "Server error while fetching trainers.",
+            error: error.message 
+        });
     }
 });
 
-// ✅ Update Trainer Profile Route (PUT)
-router.put("/trainer/:id", verifyToken, async (req, res) => {
+// Update Trainer Profile
+router.put("/trainer/profile", verifyToken, async (req, res) => {
     try {
-        const trainer = await Trainer.findById(req.params.id);
+        const { 
+            experience, 
+            certifications, 
+            specialties,
+            phoneNumber,
+            height,
+            weight,
+            dateOfBirth,
+            sex
+        } = req.body;
+
+        const trainer = await Trainer.findByIdAndUpdate(
+            req.user.id, 
+            {
+                experience, 
+                certifications, 
+                specialties,
+                phoneNumber,
+                height,
+                weight,
+                dateOfBirth,
+                sex
+            },
+            { new: true, select: '-password' }
+        );
+
         if (!trainer) {
             return res.status(404).json({ message: "Trainer not found." });
         }
 
-        Object.assign(trainer, req.body);
-        await trainer.save();
-
-        res.status(200).json({ message: "Trainer profile updated successfully!", trainer });
+        res.status(200).json({ 
+            message: "Profile updated successfully", 
+            trainer 
+        });
     } catch (error) {
-        console.error("Error updating trainer profile:", error);  // Add this line to log errors
-        res.status(500).json({ message: "Server error while updating profile." });
+        res.status(500).json({ 
+            message: "Server error while updating profile.",
+            error: error.message 
+        });
     }
 });
 
-// ✅ fetch clients assigned to a trainer.
-router.get("/trainer/:id/clients", verifyToken, async (req, res) => {
+// Fetch Clients Assigned to a Trainer
+router.get("/trainer/clients", verifyToken, async (req, res) => {
     try {
-        const trainer = await Trainer.findById(req.params.id).populate("clients");
-        if (!trainer) return res.status(404).json({ message: "Trainer not found." });
+        const trainer = await Trainer.findById(req.user.id).populate("clients");
+        
+        if (!trainer) {
+            return res.status(404).json({ message: "Trainer not found." });
+        }
 
         res.status(200).json({ clients: trainer.clients });
     } catch (error) {
-        res.status(500).json({ message: "Error retrieving clients." });
+        res.status(500).json({ 
+            message: "Error retrieving clients.",
+            error: error.message 
+        });
     }
 });
 
+// Update Trainer Availability
+router.put("/availability", verifyToken, async (req, res) => {
+    try {
+        const { trainerId, availableSlots } = req.body;
 
- 
+        if (!trainerId || !availableSlots || availableSlots.length === 0) {
+            return res.status(400).json({ message: "TrainerId and available slots are required." });
+        }
+
+        // Validate and format available slots
+        const formattedSlots = availableSlots.map(slot => {
+            if (!slot.day || !Array.isArray(slot.time)) {
+                throw new Error("Invalid slot format");
+            }
+
+            return {
+                day: slot.day,
+                time: slot.time.map(timeString => {
+                    const parsedTime = new Date(timeString);
+                    if (isNaN(parsedTime.getTime())) {
+                        throw new Error(`Invalid time format: ${timeString}`);
+                    }
+                    return parsedTime;
+                })
+            };
+        });
+
+        const availability = await TrainerAvailability.findOneAndUpdate(
+            { trainerId },
+            { availableSlots: formattedSlots },
+            { new: true, upsert: true }
+        );
+
+        res.status(200).json({ 
+            message: "Availability updated successfully!", 
+            availability 
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            message: "Server error while updating availability.",
+            error: error.message 
+        });
+    }
+});
+
 module.exports = router;

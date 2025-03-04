@@ -225,14 +225,14 @@ router.post(
 
         // Generate JWT token
         const token = jwt.sign(
-            { id: user._id, email: user.email },
+            { id: user._id, email: user.email, role: "client"},
             process.env.JWT_SECRET,
             { expiresIn: "1d" }
         );
 
         res.status(200).json({
             message: "Login successful",
-            user: { id: user._id, email: user.email },
+            user: { id: user._id, email: user.email , role: "client"},
             token,
         });
     })
