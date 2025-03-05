@@ -7,11 +7,17 @@ dotenv.config(); //loads variables from .env.
 
 const app = express();
 
-// Enable CORS for frontend communication
-app.use(cors({
-    origin: "http://localhost:3000", // Change this to frontend URL in production
+const allowedOrigins = [
+    "http://localhost:3000",
+    "https://frontend-omega-three-31.vercel.app",
+    "https://frontend-git-frontendvercel-wassim-hassans-projects.vercel.app",
+
+  ];
+  
+  app.use(cors({
+    origin: allowedOrigins,
     credentials: true
-}));
+  }));
 
 app.use("/uploads", express.static("uploads"));
 app.use(express.json()); // enables parsing JSON in requests.
@@ -51,5 +57,10 @@ app.use((err, req, res, next) => {
     res.status(err.status || 500).json({ message: err.message || "Internal Server Error" });
 });
 
+module.exports = app; // <-- Export for Vercel
+
+if (require.main === module) {
+    // Only runs if we launched this file directly with `node index.j
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); }
