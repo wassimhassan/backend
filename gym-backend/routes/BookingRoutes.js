@@ -23,18 +23,20 @@ const verifyToken = (req, res, next) => {
 };
 
 
+// ✅ Book a session
 router.post("/book-session", verifyToken, async (req, res) => {
     try {
-        const { trainerId, clientId, sessionTime } = req.body;
+        const { trainerId, sessionTime } = req.body;
+        const clientId = req.user.id;
 
-        if (!trainerId || !clientId || !sessionTime) {
-            return res.status(400).json({ message: "All fields (trainerId, clientId, sessionTime) are required." });
+        if (!trainerId || !sessionTime) {
+            return res.status(400).json({ message: "Trainer ID and session time are required." });
         }
 
         // Convert sessionTime to Date object
         const sessionDate = new Date(sessionTime);
         if (isNaN(sessionDate)) {
-            return res.status(400).json({ message: "Invalid sessionTime format. Use ISO Date format." });
+            return res.status(400).json({ message: "Invalid session time format." });
         }
 
         // Check if trainer exists
@@ -43,45 +45,38 @@ router.post("/book-session", verifyToken, async (req, res) => {
             return res.status(404).json({ message: "Trainer not found." });
         }
 
-        // Check if client exists
-        const client = await User.findById(clientId);
-        if (!client) {
-            return res.status(404).json({ message: "Client not found." });
-        }
-
-        // Fetch trainer's availability
+        // Check trainer availability
         const availability = await TrainerAvailability.findOne({ trainerId });
-
-        if (!availability || !Array.isArray(availability.availableSlots)) {
-            return res.status(400).json({ message: "Trainer has not set any valid availability." });
+        if (!availability || !availability.availableSlots) {
+            return res.status(400).json({ message: "Trainer has not set availability." });
         }
 
-        // Compare sessionTime properly
+        // Check if the selected time is available
         const isAvailable = availability.availableSlots.some(slot =>
-            slot.time.some(t => new Date(t).getTime() === sessionDate.getTime())
+            slot.time.some(timeSlot => new Date(timeSlot).getTime() === sessionDate.getTime())
         );
 
         if (!isAvailable) {
-            return res.status(400).json({ message: "Trainer is not available at the requested session time." });
+            return res.status(400).json({ message: "Trainer is not available at the requested time." });
         }
 
-        // Prevent duplicate bookings
+        // Check if session already booked
         const existingBooking = await Booking.findOne({ trainerId, clientId, sessionTime: sessionDate });
         if (existingBooking) {
             return res.status(400).json({ message: "You have already booked this session." });
         }
 
-        // Create booking
+        // Create a new booking
         const newBooking = new Booking({
             trainerId,
             clientId,
             sessionTime: sessionDate,
-            status: "pending"
+            status: "confirmed",
         });
 
         await newBooking.save();
 
-        res.status(200).json({ message: "Session booked successfully!", booking: newBooking });
+        res.status(201).json({ message: "Session booked successfully!", booking: newBooking });
     } catch (error) {
         console.error("Error booking session:", error);
         res.status(500).json({ message: "Error booking session.", error: error.message });
@@ -105,6 +100,22 @@ router.get("/bookings", verifyToken, async (req, res) => {
     }
 });
 
+// ✅ Cancel a booking
+router.delete("/bookings/:id", verifyToken, async (req, res) => {
+    try {
+        const bookingId = req.params.id;
 
+        // Find and delete the booking
+        const booking = await Booking.findByIdAndDelete(bookingId);
+        if (!booking) {
+            return res.status(404).json({ message: "Booking not found." });
+        }
+
+        res.status(200).json({ message: "Booking canceled successfully." });
+    } catch (error) {
+        console.error("Error canceling booking:", error);
+        res.status(500).json({ message: "Error canceling booking." });
+    }
+});
 
 module.exports = router;
