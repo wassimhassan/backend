@@ -40,11 +40,17 @@ app.get("/", (req, res) => {
 // Import routes
 const authRoutes = require("./routes/authRoutes");
 const trainerRoutes = require("./routes/trainerRoutes");
-const bookingRoutes = require("./routes/BookingRoutes")
+const bookingRoutes = require("./routes/BookingRoutes");
+const gymownerRoutes = require("./routes/gymOwnerRoutes");
+const subscriptionRoutes = require("./routes/subscriptionRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+
 app.use("/api/auth", authRoutes);
 app.use("/api/trainers", trainerRoutes);
 app.use("/api/booking", bookingRoutes);
-
+app.use("/api/gym-owner", gymownerRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api/payment", paymentRoutes);
 
 // 404 Route Handler (For undefined routes)
 app.use((req, res) => {

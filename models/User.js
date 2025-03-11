@@ -38,6 +38,19 @@ const UserSchema = new mongoose.Schema({
         type: String, 
         default: "/uploads/cam.jpg"
       },
+      gymOwnerId: { 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: "GymOwner", 
+        default: null 
+    },
+    payments: [{ 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: "Payment" 
+    }],
+    subscription: { 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: "Subscription" 
+    }
 }, { timestamps: true });
 
 module.exports = mongoose.model("User", UserSchema);
