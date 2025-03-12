@@ -9,10 +9,26 @@ const SubscriptionSchema = new mongoose.Schema({
     status: { type: String, enum: ["active", "expired", "canceled", "pending"], default: "active" },
     amountPaid: { type: Number, required: true },
     paymentInfo: {
-        method: { type: String, enum: ["stripe", "paypal", "cash", "credit_card", "bank_transfer"], required: true },
-        transactionId: { type: String }
-    }
+        method: { 
+            type: String, 
+            enum: ["stripe", "cash", "credit_card"],  
+        },
+        transactionId: { 
+            type: String, 
+            required: function() { return this.method !== "cash"; }  //  Required only for online methods
+        },
+        paymentDate: { 
+            type: Date, 
+            default: Date.now  
+        },
+        status: { 
+            type: String, 
+            enum: ["pending", "completed", "failed"], 
+            default: "pending" 
+        }
+    },
+    sessionDiscount: { type: Number, default: 0 },
+    maxBookingsPerMonth: { type: Number, default: 10 }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Subscription", SubscriptionSchema);
-

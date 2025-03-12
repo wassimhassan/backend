@@ -50,69 +50,120 @@ router.post("/add", verifyToken, verifyGymOwner, async (req, res) => {
     try {
         const { clientId, amount, method } = req.body;
 
-        // Validate clientId format
-        if (!mongoose.isValidObjectId(clientId)) {
-            return res.status(400).json({ message: "Invalid clientId format." });
-        }
-
-        // Check if client exists
         const client = await User.findById(clientId);
-        if (!client) {
-            return res.status(404).json({ message: "Client not found." });
+        if (!client) return res.status(404).json({ message: "Client not found." });
+
+        if (amount > client.balanceDue) {
+            return res.status(400).json({ message: "Payment exceeds the due amount." });
         }
 
-        // Check if method is valid
-        const validMethods = ["cash", "credit_card", "bank_transfer", "stripe", "paypal"];
-        if (!validMethods.includes(method)) {
-            return res.status(400).json({ 
-                message: `Invalid payment method. Choose from ${validMethods.join(", ")}` 
-            });
-        }
-
-        const owner = await GymOwner.findById(req.user.id);
-        if (!owner) return res.status(404).json({ message: "Gym Owner not found." });
-
-        // Create new payment record
         const newPayment = new Payment({
-            clientId: clientId,
+            clientId,
             amount,
             method
         });
 
-        const savedPayment = await newPayment.save();
+        await newPayment.save();
 
-        // Add payment reference to Gym Owner's records
-        owner.payments.push(savedPayment._id);
-        await owner.save();
-
-        // Add payment reference to Client's records
-        client.payments.push(savedPayment._id);
+        // ✅ Reduce balance when payment is made
+        client.balanceDue -= amount;
         await client.save();
 
-        res.status(201).json({ 
-            message: "Payment recorded successfully!",
-            payment: savedPayment
-        });
+        res.status(201).json({ message: "Payment recorded successfully!", payment: newPayment });
     } catch (error) {
         res.status(500).json({ message: "Error adding payment.", error: error.message });
     }
 });
 
+
 // Process Stripe Payment
-router.post("/stripe", async (req, res) => {
+router.post("/stripe", verifyToken, async (req, res) => {
     try {
-        const { amount, currency, description } = req.body;
+        const { amount, paymentMethodId } = req.body;
+        const clientId = req.user.id;
+
+        const client = await User.findById(clientId);
+        if (!client) return res.status(404).json({ message: "Client not found." });
+
+        if (amount > client.balanceDue) {
+            return res.status(400).json({ message: "Payment exceeds due balance." });
+        }
 
         const paymentIntent = await stripe.paymentIntents.create({
             amount: amount * 100, // Convert to cents
-            currency,
-            description,
-            payment_method_types: ["card"],
+            currency: "usd",
+            payment_method: paymentMethodId,
+            confirm: true, // Immediately confirm the payment
+            automatic_payment_methods: {
+                enabled: true,
+                allow_redirects: "never" // Prevent redirect-based payments
+            }
         });
 
-        res.status(200).json({ clientSecret: paymentIntent.client_secret });
+        res.status(200).json({
+            message: "Payment successful!",
+            clientSecret: paymentIntent.client_secret
+        });
     } catch (error) {
-        res.status(500).json({ message: "Payment failed.", error: error.message });
+        res.status(500).json({
+            message: "Payment failed.",
+            error: error.message
+        });
+    }
+});
+
+
+// Confirm Stripe Payment
+router.post("/confirm-stripe", verifyToken, async (req, res) => {
+    try {
+        const { paymentIntentId } = req.body;
+        const clientId = req.user.id;
+
+        const client = await User.findById(clientId);
+        if (!client) return res.status(404).json({ message: "Client not found." });
+
+        // Retrieve payment intent from Stripe
+        const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+        if (paymentIntent.status === "succeeded") {
+            // Store payment details in the database
+            const newPayment = new Payment({
+                clientId,
+                amount: paymentIntent.amount / 100, // Convert to dollars
+                method: "stripe",
+                transactionId: paymentIntent.id
+            });
+
+            await newPayment.save();
+
+            // ✅ Reduce balance when payment is made
+            client.balanceDue -= newPayment.amount;
+            await client.save();
+
+            res.status(201).json({
+                message: "Payment confirmed and stored successfully!",
+                payment: newPayment
+            });
+        } else {
+            res.status(400).json({ message: "Payment not yet completed." });
+        }
+    } catch (error) {
+        res.status(500).json({
+            message: "Error confirming payment.",
+            error: error.message
+        });
+    }
+});
+
+//client views their payments
+router.get("/payments/history", verifyToken, async (req, res) => {
+    try {
+        const payments = await Payment.find({ clientId: req.user.id })
+            .sort({ paymentDate: -1 });
+
+        res.status(200).json(payments);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching payment history.", error: error.message });
     }
 });
 

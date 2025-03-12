@@ -23,6 +23,13 @@ const verifyGymOwnerToken = (req, res, next) => {
     }
 };
 
+const verifyGymOwner = (req, res, next) => {
+    if (!req.owner || req.owner.role !== "gymOwner") {
+        return res.status(403).json({ message: "Access denied. Only gym owners are allowed." });
+    }
+    next();
+};
+
 // Gym Owner Authentication Routes
 
 // Gym Owner Signup (Register with Phone Number & PIN)
@@ -167,6 +174,48 @@ router.post("/clients/add/:clientId", verifyGymOwnerToken, async (req, res) => {
         res.status(500).json({ message: "Error adding client.", error: error.message });
     }
 });
+
+router.get("/unpaid-clients", verifyGymOwnerToken, async (req, res) => {
+    try {
+        const clients = await User.find({ balanceDue: { $gt: 0 } }).select("username email balanceDue");
+        res.status(200).json(clients);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching unpaid clients.", error: error.message });
+    }
+});
+
+// ✅ Gym Owner Accepts Cash Payment
+router.post("/accept-cash-payment", verifyGymOwnerToken, verifyGymOwner, async (req, res) => {
+    try {
+        const { clientId, amount } = req.body;
+
+        // Check client exists
+        const client = await User.findById(clientId);
+        if (!client) return res.status(404).json({ message: "Client not found." });
+
+        // Ensure amount doesn't exceed balance due
+        if (amount > client.balanceDue) {
+            return res.status(400).json({ message: "Payment exceeds balance due." });
+        }
+
+        // Reduce client balance
+        client.balanceDue -= amount;
+        await client.save();
+
+        // Record payment
+        const newPayment = new Payment({
+            clientId,
+            amount,
+            method: "cash",
+        });
+        await newPayment.save();
+
+        res.status(200).json({ message: "Cash payment accepted successfully!", payment: newPayment });
+    } catch (error) {
+        res.status(500).json({ message: "Error processing cash payment.", error: error.message });
+    }
+});
+
 
 // Remove a Client from Management
 router.delete("/clients/remove/:clientId", verifyGymOwnerToken, async (req, res) => {

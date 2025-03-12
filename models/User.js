@@ -38,6 +38,14 @@ const UserSchema = new mongoose.Schema({
         type: String, 
         default: "/uploads/cam.jpg"
       },
+      balanceDue: { 
+        type: Number, 
+        default: 0 
+      },
+      balanceLimit: { 
+        type: Number, 
+        default: 200 
+      },
       gymOwnerId: { 
         type: mongoose.Schema.Types.ObjectId, 
         ref: "GymOwner", 

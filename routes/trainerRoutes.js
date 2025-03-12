@@ -359,4 +359,67 @@ router.put("/availability", verifyToken, async (req, res) => {
     }
 });
 
+// ✅ Get Trainer's Booked Sessions
+router.get("/trainer/bookings", verifyToken, async (req, res) => {
+    try {
+        // Ensure user is a trainer
+        const trainer = await Trainer.findById(req.user.id);
+        if (!trainer) return res.status(404).json({ message: "Trainer not found." });
+
+        // Find all confirmed bookings for this trainer
+        const bookings = await Booking.find({ trainerId: trainer._id, status: "confirmed" })
+            .populate("clientId", "username email phoneNumber")
+            .sort({ sessionTime: 1 });
+
+        res.status(200).json(bookings);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching bookings.", error: error.message });
+    }
+});
+
+// ✅ Prevent Client from Booking More Than Allowed Sessions
+router.post("/book-session", verifyToken, async (req, res) => {
+    try {
+        const { trainerId, sessionTime, sessionCost } = req.body;
+        const client = await User.findById(req.user.id).populate("subscription");
+
+        if (!client) return res.status(404).json({ message: "Client not found." });
+
+        if (!client.subscription) {
+            return res.status(403).json({ message: "No active subscription. Please subscribe first." });
+        }
+
+        // Check if client exceeded max bookings
+        const subscription = client.subscription;
+        const bookedSessions = await Booking.countDocuments({ clientId: client._id });
+
+        if (bookedSessions >= subscription.maxBookingsPerMonth) {
+            return res.status(403).json({ message: "You have reached your booking limit for this month." });
+        }
+
+        // Apply discount
+        const finalCost = sessionCost - (sessionCost * (subscription.sessionDiscount / 100));
+
+        if (client.balanceDue + finalCost > client.balanceLimit) {
+            return res.status(403).json({ message: "Insufficient balance. Please pay outstanding fees." });
+        }
+
+        const newBooking = new Booking({
+            trainerId,
+            clientId: client._id,
+            sessionTime,
+            status: "confirmed",
+            sessionCost: finalCost
+        });
+
+        await newBooking.save();
+        client.balanceDue += finalCost;
+        await client.save();
+
+        res.status(201).json({ message: "Session booked successfully!", booking: newBooking });
+    } catch (error) {
+        res.status(500).json({ message: "Error booking session.", error: error.message });
+    }
+});
+
 module.exports = router;

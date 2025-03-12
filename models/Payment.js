@@ -5,11 +5,15 @@ const PaymentSchema = new mongoose.Schema({
     amount: { type: Number, required: true },
     method: {
         type: String,
-        enum: ["cash", "credit_card", "bank_transfer", "stripe", "paypal"],
+        enum: ["stripe", "cash", "credit_card"],  
         required: true
     },
-    transactionId: { type: String },
-    paymentDate: { type: Date, default: Date.now }
+    transactionId: { 
+        type: String,
+        required: function() { return this.method !== "cash"; }  // Required only for online methods
+    },
+    paymentDate: { type: Date, default: Date.now },
+    status: { type: String, enum: ["pending", "completed", "failed"], default: "pending" }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Payment", PaymentSchema);
