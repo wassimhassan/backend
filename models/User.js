@@ -38,27 +38,6 @@ const UserSchema = new mongoose.Schema({
         type: String, 
         default: "/uploads/cam.jpg"
       },
-      balanceDue: { 
-        type: Number, 
-        default: 0 
-      },
-      balanceLimit: { 
-        type: Number, 
-        default: 200 
-      },
-      gymOwnerId: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: "GymOwner", 
-        default: null 
-    },
-    payments: [{ 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: "Payment" 
-    }],
-    subscription: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: "Subscription" 
-    }
 }, { timestamps: true });
 
 module.exports = mongoose.model("User", UserSchema);
