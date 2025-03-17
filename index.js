@@ -40,10 +40,12 @@ app.get("/", (req, res) => {
 // Import routes
 const authRoutes = require("./routes/authRoutes");
 const trainerRoutes = require("./routes/trainerRoutes");
-const bookingRoutes = require("./routes/BookingRoutes")
+const bookingRoutes = require("./routes/BookingRoutes");
+const workoutRoutes = require("./routes/workoutRoutes");
 app.use("/api/auth", authRoutes);
 app.use("/api/trainers", trainerRoutes);
 app.use("/api/booking", bookingRoutes);
+app.use("/api/workouts", workoutRoutes);
 
 
 // 404 Route Handler (For undefined routes)
