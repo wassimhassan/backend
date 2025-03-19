@@ -7,6 +7,8 @@ const GymOwner = require("../models/GymOwner");
 const User = require("../models/User");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const router = express.Router();
+const asyncHandler = require("express-async-handler");
+
 
 // Middleware: Verify token
 const verifyToken = (req, res, next) => {
@@ -166,5 +168,40 @@ router.get("/payments/history", verifyToken, async (req, res) => {
         res.status(500).json({ message: "Error fetching payment history.", error: error.message });
     }
 });
+
+// Update Client Payment Route
+router.put("/update-payment/:clientId", verifyToken, asyncHandler(async (req, res) => {
+    console.log("Received update-payment request for client:", req.params.clientId);
+    console.log("Request body:", req.body);
+
+    try {
+        const { clientId } = req.params;
+        const { amountPaid } = req.body;
+
+        if (!amountPaid || amountPaid <= 0) {
+            return res.status(400).json({ message: "Invalid payment amount." });
+        }
+
+        const client = await User.findById(clientId);
+        if (!client) {
+            return res.status(404).json({ message: "Client not found." });
+        }
+
+        console.log("Before update - balanceDue:", client.balanceDue);
+
+        client.balanceDue -= amountPaid;
+        if (client.balanceDue < 0) client.balanceDue = 0;
+
+        await client.save();
+
+        console.log("After update - balanceDue:", client.balanceDue);
+
+        res.status(200).json({ message: "Payment updated successfully.", client });
+    } catch (error) {
+        console.error("Update payment error:", error);
+        res.status(500).json({ message: "Server error.", error: error.message });
+    }
+}));
+
 
 module.exports = router;

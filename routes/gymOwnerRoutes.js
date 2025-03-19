@@ -8,6 +8,8 @@ const User = require("../models/User");
 const Payment = require("../models/Payment");
 const Subscription = require("../models/Subscription");
 const router = express.Router();
+const asyncHandler = require("express-async-handler");
+
 
 // Middleware: Verify Gym Owner Token
 const verifyGymOwnerToken = (req, res, next) => {
@@ -175,14 +177,17 @@ router.post("/clients/add/:clientId", verifyGymOwnerToken, async (req, res) => {
     }
 });
 
-router.get("/unpaid-clients", verifyGymOwnerToken, async (req, res) => {
+router.get("/unpaid-clients", verifyGymOwnerToken, verifyGymOwner, asyncHandler(async (req, res) => {
     try {
-        const clients = await User.find({ balanceDue: { $gt: 0 } }).select("username email balanceDue");
-        res.status(200).json(clients);
+        const unpaidClients = await User.find({ balanceDue: { $gt: 0 } })  // Only users with due balance
+            .select("username email balanceDue");
+
+        res.status(200).json(unpaidClients);
     } catch (error) {
         res.status(500).json({ message: "Error fetching unpaid clients.", error: error.message });
     }
-});
+}));
+
 
 // ✅ Gym Owner Accepts Cash Payment
 router.post("/accept-cash-payment", verifyGymOwnerToken, verifyGymOwner, async (req, res) => {
