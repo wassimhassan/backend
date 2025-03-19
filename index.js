@@ -41,12 +41,16 @@ app.get("/", (req, res) => {
 const authRoutes = require("./routes/authRoutes");
 const trainerRoutes = require("./routes/trainerRoutes");
 const bookingRoutes = require("./routes/BookingRoutes");
-const workoutRoutes = require("./routes/workoutRoutes");
-const chatRoutes = require("./routes/chatRoutes");
+const gymownerRoutes = require("./routes/gymOwnerRoutes");
+const subscriptionRoutes = require("./routes/subscriptionRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+
 app.use("/api/auth", authRoutes);
 app.use("/api/trainers", trainerRoutes);
 app.use("/api/booking", bookingRoutes);
-app.use("/api/workouts", workoutRoutes);
+app.use("/api/gym-owner", gymownerRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api/payment", paymentRoutes);app.use("/api/workouts", workoutRoutes);
 app.use("/api/chat", chatRoutes);
 
 //(additional code for Socket.IO)
