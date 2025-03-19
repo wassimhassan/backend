@@ -53,7 +53,7 @@ const SUBSCRIPTION_BENEFITS = {
 };
 
 // ✅ Clients Can Purchase Subscriptions
-router.post("/purchase", verifyToken, async (req, res) => {
+router.post("/purchases", verifyToken, async (req, res) => {
     try {
         const { planType, endDate, method, transactionId } = req.body;
         const client = await User.findById(req.user.id);
@@ -189,36 +189,56 @@ router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
 router.post("/purchase", verifyToken, async (req, res) => {
     try {
         const { planType, endDate, method, transactionId } = req.body;
+
+        console.log("📌 Received Subscription Request:", req.body); // Debugging
+
+        // 🔹 Find the client
         const client = await User.findById(req.user.id);
-
         if (!client) return res.status(404).json({ message: "Client not found." });
-        if (!SUBSCRIPTION_BENEFITS[planType]) return res.status(400).json({ message: "Invalid subscription plan." });
 
+        // 🔹 Validate plan type
+        if (!SUBSCRIPTION_BENEFITS[planType]) {
+            return res.status(400).json({ message: "Invalid subscription plan." });
+        }
+
+        // 🔹 Validate endDate
+        if (!endDate || new Date(endDate) <= new Date()) {
+            return res.status(400).json({ message: "Please select a valid future date." });
+        }
+
+        // 🔹 Set default transactionId for cash payments
+        const finalTransactionId = method === "cash" ? "N/A" : transactionId;
+
+        // 🔹 Get Subscription Benefits
         const { sessionDiscount, maxBookingsPerMonth } = SUBSCRIPTION_BENEFITS[planType];
 
-        // Create a new subscription
+        // 🔹 Create a new subscription
         const newSubscription = new Subscription({
             clientId: client._id,
             planType,
             startDate: new Date(),
             endDate: new Date(endDate),
             renewalDate: new Date(endDate),
-            status: method === "cash" ? "pending" : "active",  // If cash, gym owner must approve
+            status: method === "cash" ? "pending" : "active",  // Cash requires gym owner approval
             amountPaid: 0,  // Payment is recorded separately
-            paymentInfo: { method, transactionId },
+            paymentInfo: { method, transactionId: finalTransactionId },
             sessionDiscount,
             maxBookingsPerMonth
         });
 
+        console.log("✅ Creating Subscription:", newSubscription);
         await newSubscription.save();
+
         client.subscription = newSubscription._id;
         await client.save();
 
-        res.status(201).json({ message: "Subscription requested successfully!", subscription: newSubscription });
+        console.log("✅ Subscription Successfully Saved.");
+        return res.status(201).json({ message: "Subscription purchased successfully!", subscription: newSubscription });
+
     } catch (error) {
-        res.status(500).json({ message: "Error purchasing subscription.", error: error.message });
+        console.error("❌ Error purchasing subscription:", error.message);
+        return res.status(500).json({ message: "Error purchasing subscription.", error: error.message });
     }
 });
-
 
 module.exports = router;

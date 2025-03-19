@@ -4,34 +4,44 @@ const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const WorkoutPlan = require('../models/WorkoutPlan');
 const Trainer = require('../models/Trainer');
+const Client = require("../models/User");
 
 const router = express.Router();
 
 // Authentication Middleware
 const authMiddleware = async (req, res, next) => {
-    const token = req.header('Authorization')?.split(" ")[1]; // Extract token
+    const token = req.header("Authorization")?.split(" ")[1];
 
     if (!token) {
-        return res.status(401).json({ error: 'No token, authorization denied' });
+        console.error("🚨 No token found in request headers!");
+        return res.status(401).json({ error: "No token, authorization denied" });
     }
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        console.log("Decoded Token:", decoded);  // Debugging: See if the token is properly decoded
+        console.log("✅ Decoded Token:", decoded); // Log decoded token
 
-        req.user = await Trainer.findById(decoded.id).select('-password');
-        
-        if (!req.user) {
-            return res.status(401).json({ error: 'Invalid token' });
+        if (decoded.role === "trainer") {
+            req.user = await Trainer.findById(decoded.id).select("-password");
+        } else if (decoded.role === "client") {
+            req.user = await Client.findById(decoded.id).select("-password");
+        } else {
+            console.error("🚨 Unknown role in token:", decoded.role);
+            return res.status(403).json({ error: "Unauthorized role" });
         }
 
+        if (!req.user) {
+            console.error(`🚨 Token is valid, but no matching ${decoded.role} found in database! ID:`, decoded.id);
+            return res.status(401).json({ error: "Invalid token, user not found" });
+        }
+
+        console.log(`✅ Authenticated ${decoded.role}:`, req.user.id);
         next();
     } catch (err) {
-        console.error("Token verification error:", err.message);  // Debugging: Log token verification error
-        res.status(401).json({ error: 'Token is not valid' });
+        console.error("🚨 Token verification failed:", err.message);
+        res.status(401).json({ error: "Token is not valid" });
     }
 };
-
 
 /**
  * @route   POST /workouts
