@@ -4,6 +4,8 @@ const jwt = require("jsonwebtoken"); //Used for user authentication.
 const nodemailer = require("nodemailer"); // Import Nodemailer for sending emails.
 const User = require("../models/User");
 const multer = require("multer");
+const multerS3 = require('multer-s3');
+const s3 = require('../utils/s3');
 const asyncHandler = require("express-async-handler");
 
 const router = express.Router();
@@ -317,17 +319,20 @@ router.post(
     })
 );
 
-// Configure Multer for Image Uploads
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, "uploads/"); // Save files inside 'uploads' folder
-    },
-    filename: (req, file, cb) => {
-        cb(null, `${req.user.id}-${Date.now()}-${file.originalname}`);
-    }
+const upload = multer({
+    storage: multerS3({
+        s3: s3,
+        bucket: process.env.AWS_BUCKET_NAME,
+        metadata: function (req, file, cb) {
+            cb(null, { fieldName: file.fieldname });
+        },
+        key: function (req, file, cb) {
+            cb(null, Date.now().toString() + '-' + file.originalname);
+        }
+    })
 });
 
-const upload = multer({ storage });
+
 
 // Upload Profile Picture
 router.post("/upload-profile-picture", verifyToken, upload.single("profilePicture"), async (req, res) => {
@@ -337,7 +342,8 @@ router.post("/upload-profile-picture", verifyToken, upload.single("profilePictur
             return res.status(404).json({ message: "User not found" });
         }
 
-        user.profilePicture = `/uploads/${req.file.filename}`;
+        // Store S3 URL
+        user.profilePicture = req.file.location;
         await user.save();
 
         res.status(200).json({ message: "Profile picture uploaded", profilePicture: user.profilePicture });
@@ -354,7 +360,7 @@ router.put("/update-profile-picture", verifyToken, upload.single("profilePicture
             return res.status(404).json({ message: "User not found" });
         }
 
-        user.profilePicture = `/uploads/${req.file.filename}`;
+        user.profilePicture = req.file.location;
         await user.save();
 
         res.status(200).json({ message: "Profile picture updated", profilePicture: user.profilePicture });
@@ -372,11 +378,26 @@ router.delete("/remove-profile-picture", verifyToken, async (req, res) => {
         }
 
         // Reset to default profile picture (cam.jpg)
-        user.profilePicture = "/uploads/cam.jpg";
+        user.profilePicture = "https://your-s3-bucket.s3.eu-north-1.amazonaws.com/default.jpg"; // ✅ Correct S3 default image
         await user.save();
 
         res.status(200).json({ message: "Profile picture removed", profilePicture: user.profilePicture });
     } catch (error) {
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+});
+
+// Get User Profile Picture
+router.get("/profile-picture", verifyToken, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        res.status(200).json({ profilePicture: user.profilePicture });
+    } catch (error) {
+        console.error("Error fetching profile picture:", error);
         res.status(500).json({ message: "Server error", error: error.message });
     }
 });

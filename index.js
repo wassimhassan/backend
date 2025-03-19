@@ -41,9 +41,70 @@ app.get("/", (req, res) => {
 const authRoutes = require("./routes/authRoutes");
 const trainerRoutes = require("./routes/trainerRoutes");
 const bookingRoutes = require("./routes/BookingRoutes")
+const chatRoutes = require("./routes/chatRoutes");
 app.use("/api/auth", authRoutes);
 app.use("/api/trainers", trainerRoutes);
 app.use("/api/booking", bookingRoutes);
+app.use("/api/chat", chatRoutes);
+
+//(additional code for Socket.IO)
+const http = require("http");
+const server = http.createServer(app);
+const { Server } = require("socket.io");
+const jwt = require("jsonwebtoken");
+const Message = require("./models/Message");
+
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"]
+  }
+});
+
+// Socket.IO authentication middleware
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error("Authentication error"));
+  }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.user = decoded;
+    next();
+  } catch (err) {
+    next(new Error("Authentication error"));
+  }
+});
+
+io.on("connection", (socket) => {
+  console.log(`User connected: ${socket.user.id}`);
+  
+  // Join a room using the user's ID for private messaging.
+  socket.join(socket.user.id);
+
+  // Listen for a "sendMessage" event from the client.
+  socket.on("sendMessage", async ({ sender, receiver, text }) => {
+    // Enforce that the sender matches the authenticated user.
+    if (sender !== socket.user.id) {
+      return;
+    }
+    const message = new Message({
+      sender,
+      receiver,
+      text,
+      timestamp: new Date()
+    });
+    await message.save();
+    
+    // Emit the message to both the sender and the receiver.
+    io.to(receiver).emit("receiveMessage", message);
+    io.to(sender).emit("receiveMessage", message);
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`User disconnected: ${socket.user.id}`);
+  });
+});
 
 
 // 404 Route Handler (For undefined routes)
@@ -62,5 +123,6 @@ module.exports = app; // <-- Export for Vercel
 if (require.main === module) {
     // Only runs if we launched this file directly with `node index.j
 
+    // Replace app.listen with server.listen
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); }
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`)); }
