@@ -1,7 +1,12 @@
-const express = require("express");
+const express = require("express"); 
 const router = express.Router();
 const { getUserData } = require("../services/userservices");
 const { generateSuggestions } = require("../services/aiservices");
+
+// 🔥 Debug route
+router.get("/test", (req, res) => {
+  res.send("✅ AI test route hit!");
+});
 
 router.post("/ai-suggestions", async (req, res) => {
   const { user_id: userId } = req.body;
@@ -18,7 +23,6 @@ router.post("/ai-suggestions", async (req, res) => {
     console.error("AI Suggestion Error:", error.response?.data || error.message || error);
     res.status(500).json({ error: "Failed to generate suggestions." });
   }
-  
 });
 
 module.exports = router;
