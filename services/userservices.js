@@ -1,17 +1,32 @@
 const User = require("../models/User");
 
 async function getUserData(userId) {
-  const user = await User.findById(userId);
-  if (!user) throw new Error("User not found");
+  try {
+    const user = await User.findById(userId);
 
-  return {
-    name: user.name,
-    goal: user.goal,
-    height: user.height,
-    weight: user.weight,
-    workoutHistory: user.workoutHistory,
-    preferences: user.preferences
-  };
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    return {
+      username: user.username,
+      email: user.email,
+      height: user.height,
+      weight: user.weight,
+      dateOfBirth: user.dateOfBirth,
+      phoneNumber: user.phoneNumber,
+      workoutDaysPerWeek: user.workoutDaysPerWeek,
+      goal: user.goal,
+      sex: user.sex,
+      profilePicture: user.profilePicture
+    };
+  } catch (error) {
+    console.error("getUserData error:", error.message);
+    throw error;
+  }
 }
+
+module.exports = { getUserData };
+
 
   

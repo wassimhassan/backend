@@ -15,9 +15,10 @@ router.post("/ai-suggestions", async (req, res) => {
     const suggestions = await generateSuggestions(userData);
     res.json(suggestions);
   } catch (error) {
-    console.error("AI Suggestion Error:", error.message);
+    console.error("AI Suggestion Error:", error.response?.data || error.message || error);
     res.status(500).json({ error: "Failed to generate suggestions." });
   }
+  
 });
 
 module.exports = router;
