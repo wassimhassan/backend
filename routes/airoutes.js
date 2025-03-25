@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const { getUserData } = require("../services/userService");
-const { generateSuggestions } = require("../services/aiService");
+const { getUserData } = require("../services/userservices");
+const { generateSuggestions } = require("../services/aiservices");
 
 router.post("/ai-suggestions", async (req, res) => {
   const { user_id: userId } = req.body;
