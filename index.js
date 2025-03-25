@@ -43,11 +43,13 @@ const trainerRoutes = require("./routes/trainerRoutes");
 const bookingRoutes = require("./routes/BookingRoutes");
 const workoutRoutes = require("./routes/workoutRoutes");
 const chatRoutes = require("./routes/chatRoutes");
+const aiRoutes = require("./routes/airoutes");
 app.use("/api/auth", authRoutes);
 app.use("/api/trainers", trainerRoutes);
 app.use("/api/booking", bookingRoutes);
 app.use("/api/workouts", workoutRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/ai", aiRoutes);
 
 //(additional code for Socket.IO)
 const http = require("http");
