@@ -2,6 +2,7 @@ const User = require("../models/User");
 
 async function getUserData(userId) {
   try {
+    console.log("🔍 Searching MongoDB for ID:", userId);
     const user = await User.findById(userId);
 
     if (!user) {
@@ -27,6 +28,4 @@ async function getUserData(userId) {
 }
 
 module.exports = { getUserData };
-
-
   
