@@ -9,7 +9,7 @@ async function generateSuggestions(userData) {
   const prompt = `
 User data: ${JSON.stringify(userData, null, 2)}
 
-Please provide your response in the following format:
+Please provide your response in the following format. Make sure to include all three sections with at least a brief description for each:
 
 1. Workout Plan: [Your workout plan here]
 2. Nutrition Plan: [Your nutrition plan here]
@@ -20,7 +20,7 @@ Please provide your response in the following format:
     model: "gpt-3.5-turbo",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.7,
-    max_tokens: 150
+    max_tokens: 300  // increased token limit for a more complete response
   });
 
   const aiResponse = completion.choices[0].message.content;
@@ -38,4 +38,5 @@ Please provide your response in the following format:
 }
 
 module.exports = { generateSuggestions };
+
 
