@@ -130,8 +130,8 @@ router.post("/trainer/login", async (req, res) => {
     }
 });
 
-// Fetch Trainer Availability
-router.get("/availability/:trainerId", async (req, res) => {  // Removed `verifyToken`
+// Fetch Trainer Availability - Add verifyToken middleware back
+router.get("/availability/:trainerId", verifyToken, async (req, res) => {
     try {
         const { trainerId } = req.params;
         if (!trainerId || trainerId.length !== 24) {

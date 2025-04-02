@@ -13,7 +13,8 @@ const PaymentSchema = new mongoose.Schema({
         required: function() { return this.method !== "cash"; }  // Required only for online methods
     },
     paymentDate: { type: Date, default: Date.now },
-    status: { type: String, enum: ["pending", "completed", "failed"], default: "pending" }
+    status: { type: String, enum: ["pending", "completed", "failed"], default: "pending" },
+    bookingId: { type: mongoose.Schema.Types.ObjectId, ref: "Booking", default: null },
 }, { timestamps: true });
 
 module.exports = mongoose.model("Payment", PaymentSchema);

@@ -46,6 +46,7 @@ const subscriptionRoutes = require("./routes/subscriptionRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const workoutRoutes = require("./routes/workoutRoutes");
 const chatRoutes = require("./routes/chatRoutes");
+const { scheduleSubscriptionTasks } = require('./tasks/subscriptionTasks');
 
 app.use("/api/auth", authRoutes);
 app.use("/api/trainers", trainerRoutes);
@@ -135,3 +136,5 @@ if (require.main === module) {
     // Replace app.listen with server.listen
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`)); }
+
+scheduleSubscriptionTasks();

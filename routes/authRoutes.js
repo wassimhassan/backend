@@ -7,6 +7,7 @@ const multer = require("multer");
 const multerS3 = require('multer-s3');
 const s3 = require('../utils/s3');
 const asyncHandler = require("express-async-handler");
+const GymOwner  = require("../models/GymOwner"); // Import GymOwner model
 
 const router = express.Router();
 require("dotenv").config();
@@ -71,6 +72,7 @@ router.post("/signup", async (req, res) => {
             username, 
             email, 
             password, 
+            gymOwnerId,
             height, 
             weight, 
             dateOfBirth, 
@@ -80,7 +82,10 @@ router.post("/signup", async (req, res) => {
             sex 
         } = req.body;
 
-    
+        const gymOwner = await GymOwner.findOne(); // You can adjust this if necessary
+        if (!gymOwner) {
+          return res.status(400).json({ message: "Gym owner not found." });
+        }
         // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
@@ -90,6 +95,7 @@ router.post("/signup", async (req, res) => {
             username,
             email,
             password: hashedPassword,
+            gymOwnerId: gymOwner._id,
             height: height || 0, 
             weight: weight || 0, 
             dateOfBirth: dateOfBirth || null, // No default value

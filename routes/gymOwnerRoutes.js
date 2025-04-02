@@ -125,8 +125,7 @@ router.put("/update-pin", verifyGymOwnerToken, async (req, res) => {
 router.get("/clients", verifyGymOwnerToken, async (req, res) => {
     try {
         // Fetch all users who signed up (assuming all users are clients)
-        const clients = await User.find().select("-password"); // Exclude password for security
-
+        const clients = await User.find({ gymOwnerId: req.owner.id }).select("-password"); 
         if (!clients || clients.length === 0) {
             return res.status(404).json({ message: "No clients found." });
         }

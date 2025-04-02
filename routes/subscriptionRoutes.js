@@ -6,6 +6,8 @@ const Subscription = require("../models/Subscription");
 const GymOwner = require("../models/GymOwner");
 const User = require("../models/User");
 const Payment = require("../models/Payment");
+const Booking = require("../models/Booking");
+const Plan = require("../models/Plan");
 const router = express.Router();
 
 // Middleware: Verify token
@@ -51,41 +53,6 @@ const SUBSCRIPTION_BENEFITS = {
     premium: { sessionDiscount: 10, maxBookingsPerMonth: 15 },
     pro: { sessionDiscount: 15, maxBookingsPerMonth: 25 }
 };
-
-// ✅ Clients Can Purchase Subscriptions
-router.post("/purchases", verifyToken, async (req, res) => {
-    try {
-        const { planType, endDate, method, transactionId } = req.body;
-        const client = await User.findById(req.user.id);
-
-        if (!client) return res.status(404).json({ message: "Client not found." });
-        if (!SUBSCRIPTION_BENEFITS[planType]) return res.status(400).json({ message: "Invalid subscription plan." });
-
-        const { sessionDiscount, maxBookingsPerMonth } = SUBSCRIPTION_BENEFITS[planType];
-
-        // Create a new subscription
-        const newSubscription = new Subscription({
-            clientId: client._id,
-            planType,
-            startDate: new Date(),
-            endDate: new Date(endDate),
-            renewalDate: new Date(endDate),
-            status: method === "cash" ? "pending" : "active",  // If cash, gym owner must approve
-            amountPaid: 0,  // Payment is recorded separately
-            paymentInfo: { method, transactionId },
-            sessionDiscount,
-            maxBookingsPerMonth
-        });
-
-        await newSubscription.save();
-        client.subscription = newSubscription._id;
-        await client.save();
-
-        res.status(201).json({ message: "Subscription requested successfully!", subscription: newSubscription });
-    } catch (error) {
-        res.status(500).json({ message: "Error purchasing subscription.", error: error.message });
-    }
-});
 
 // ✅ Gym Owner Views All Subscriptions
 router.get("/track", verifyToken, verifyGymOwner, async (req, res) => {
@@ -189,12 +156,20 @@ router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
 router.post("/purchase", verifyToken, async (req, res) => {
     try {
         const { planType, endDate, method, transactionId } = req.body;
-
-        console.log("📌 Received Subscription Request:", req.body); // Debugging
-
-        // 🔹 Find the client
         const client = await User.findById(req.user.id);
+        
         if (!client) return res.status(404).json({ message: "Client not found." });
+
+        // 🔹 Check if the user already has an active subscription
+        const activeSubscription = await Subscription.findOne({
+            clientId: client._id,
+            status: "active",
+            endDate: { $gte: new Date() }
+        });
+
+        if (activeSubscription) {
+            return res.status(400).json({ message: "You already have an active subscription." });
+        }
 
         // 🔹 Validate plan type
         if (!SUBSCRIPTION_BENEFITS[planType]) {
@@ -238,6 +213,57 @@ router.post("/purchase", verifyToken, async (req, res) => {
     } catch (error) {
         console.error("❌ Error purchasing subscription:", error.message);
         return res.status(500).json({ message: "Error purchasing subscription.", error: error.message });
+    }
+});
+
+router.get("/subscription-status", verifyToken, async (req, res) => {
+    try {
+        const clientId = req.user.id;
+        const now = new Date();
+
+        // Fetch active subscription
+        const subscription = await Subscription.findOne({
+            clientId,
+            status: "active",
+            startDate: { $lte: now },
+            endDate: { $gte: now }
+        });
+
+        if (!subscription) {
+            return res.status(200).json({ hasActiveSubscription: false });
+        }
+
+        // Calculate start and end of the current month
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+        // Get bookings for the client with active subscription within this month
+        const subscriptionBookings = await Booking.countDocuments({
+            clientId,
+            paymentMethod: "subscription",
+            sessionTime: { $gte: startOfMonth, $lte: endOfMonth }
+        });
+
+        // Calculate remaining sessions
+        const remainingSessions = subscription.maxBookingsPerMonth - subscriptionBookings;
+
+        return res.status(200).json({
+            hasActiveSubscription: true,
+            subscription,
+            remainingSessions
+        });
+    } catch (error) {
+        console.error("❌ Error checking subscription status:", error);
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+});
+
+router.get("/plans", async (req, res) => {
+    try {
+        const plans = await Plan.find();
+        res.status(200).json(plans);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching plans.", error: error.message });
     }
 });
 
