@@ -297,22 +297,19 @@ router.put("/trainer/profile", verifyToken, async (req, res) => {
 });
 
 // Fetch Clients Assigned to a Trainer
+// Fetch ALL Clients for Trainer (permanently)
 router.get("/trainer/clients", verifyToken, async (req, res) => {
     try {
-        const trainer = await Trainer.findById(req.user.id).populate("clients");
-        
-        if (!trainer) {
-            return res.status(404).json({ message: "Trainer not found." });
-        }
-
-        res.status(200).json({ clients: trainer.clients });
+      const clients = await User.find({ role: "client" }).select("name _id");
+      res.status(200).json({ clients });
     } catch (error) {
-        res.status(500).json({ 
-            message: "Error retrieving clients.",
-            error: error.message 
-        });
+      res.status(500).json({
+        message: "Error retrieving clients.",
+        error: error.message,
+      });
     }
-});
+  });
+  
 
 // Update Trainer Availability
 router.put("/availability", verifyToken, async (req, res) => {

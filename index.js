@@ -47,6 +47,7 @@ const paymentRoutes = require("./routes/paymentRoutes");
 const workoutRoutes = require("./routes/workoutRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const { scheduleSubscriptionTasks } = require('./tasks/subscriptionTasks');
+const airoutes = require("./routes/airoutes");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/trainers", trainerRoutes);
@@ -56,6 +57,7 @@ app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/workouts", workoutRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/ai", airoutes);
 
 //(additional code for Socket.IO)
 const http = require("http");
@@ -74,14 +76,19 @@ const io = new Server(server, {
 // Socket.IO authentication middleware
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
+
   if (!token) {
+    console.log("❌ Missing socket token");
     return next(new Error("Authentication error"));
   }
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     socket.user = decoded;
+    console.log("✅ Authenticated socket user:", decoded.id);
     next();
   } catch (err) {
+    console.log("❌ Invalid token:", err.message);
     next(new Error("Authentication error"));
   }
 });
