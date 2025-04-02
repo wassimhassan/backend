@@ -1,4 +1,5 @@
 const express = require("express");
+const jwt = require("jsonwebtoken");  // Add this line to import the JWT library
 const router = express.Router();
 
 const { getUserData, testUserService } = require("../Services/userservices");
@@ -43,17 +44,32 @@ router.get("/test-user/:userId", async (req, res) => {
 });
 
 // 🧠 Main AI Suggestions Route
+// 🧠 Main AI Suggestions Route
 router.post("/ai-suggestions", async (req, res) => {
-  const { user_id: userId } = req.body;
+  // 🧠 Extract the token from the Authorization header
+  const token = req.headers['authorization']?.split(' ')[1]; // "Bearer <token>"
 
-  console.log("📦 Received user_id:", userId);
-  console.log("📦 Full body:", req.body);
-  
-  if (!userId) {
-    return res.status(400).json({ error: "Missing user_id in request body." });
+  if (!token) {
+    return res.status(401).json({ error: "Authorization token is missing" });
   }
 
   try {
+    // Verify the token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log("📦 Decoded token:", decoded);
+    
+    // Try to extract user ID from various possible fields
+    const userId = decoded.userId || decoded.id || decoded.user_id;
+
+    if (!userId) {
+      return res.status(400).json({ 
+        error: "Missing user ID in token", 
+        decoded: decoded // Log what's actually in the token
+      });
+    }
+
+    console.log("📦 Using user ID:", userId);
+
     // Get user data with error handling
     let userData;
     try {
@@ -78,12 +94,12 @@ router.post("/ai-suggestions", async (req, res) => {
     }
 
     res.json(suggestions);
+
   } catch (error) {
-    console.error("❌ General Error:", error.message);
-    console.error("❌ Full stack:", error.stack);
-    res.status(500).json({ 
-      error: "An unexpected error occurred",
-      message: "Please try again later or contact support if the issue persists."
+    console.error("❌ Token verification error:", error.message);
+    res.status(401).json({ 
+      error: "Invalid or expired token",
+      message: "Please log in again."
     });
   }
 });
