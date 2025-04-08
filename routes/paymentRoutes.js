@@ -41,39 +41,86 @@ router.get("/", verifyToken, verifyGymOwner, async (req, res) => {
         if (!owner) return res.status(404).json({ message: "Gym Owner not found." });
 
         const payments = await Payment.find({ _id: { $in: owner.payments } })
-            .populate("clientId", "username phoneNumber email");
+            .populate("clientId", "username email phoneNumber");
 
         res.status(200).json(payments);
     } catch (error) {
+        console.error("Error fetching payments:", error);
         res.status(500).json({ message: "Error fetching payments.", error: error.message });
     }
 });
 
-// Add a Payment Record
-router.post("/add", verifyToken, verifyGymOwner, async (req, res) => {
+// Get payment history (works for both clients and gym owners)
+router.get('/history', verifyToken, async (req, res) => {
     try {
-        const { clientId, amount, method } = req.body;
+        let payments;
+        let totalPending = 0;
 
-        const client = await User.findById(clientId);
-        if (!client) return res.status(404).json({ message: "Client not found." });
+        if (req.user.role === 'gymOwner') {
+            // For gym owner: get all payments they manage
+            const owner = await GymOwner.findById(req.user.id);
+            if (!owner) {
+                return res.status(404).json({ message: "Gym Owner not found." });
+            }
+            
+            payments = await Payment.find({ _id: { $in: owner.payments } })
+                .populate("clientId", "username email phoneNumber")
+                .sort({ date: -1 });
 
-        const amountToCharge = await getOutstandingGymPayments(clientId);
-        
-        if (amount > amountToCharge) {
-            return res.status(400).json({ message: "Payment exceeds the due amount." });
+        } else {
+            // For clients: get their own payments
+            payments = await Payment.find({ clientId: req.user.id })
+                .sort({ date: -1 });
+
+            // Calculate total pending for clients only
+            const pendingResult = await Payment.aggregate([
+                { 
+                    $match: { 
+                        clientId: new mongoose.Types.ObjectId(req.user.id), 
+                        status: 'pending' 
+                    } 
+                },
+                { 
+                    $group: { 
+                        _id: null, 
+                        total: { $sum: '$amount' } 
+                    } 
+                }
+            ]);
+
+            totalPending = pendingResult.length > 0 ? pendingResult[0].total : 0;
         }
 
-        const newPayment = new Payment({
-            clientId,
-            amount,
-            method
+        // Format the response based on user role
+        const formattedPayments = payments.map(payment => ({
+            _id: payment._id,
+            date: payment.date,
+            description: payment.description || 'Payment',  // Provide default description
+            amount: payment.amount,
+            status: payment.status || 'completed',  // Provide default status
+            receiptUrl: payment.receiptUrl,
+            // Include client details only for gym owner view
+            ...(req.user.role === 'gymOwner' && {
+                client: payment.clientId ? {
+                    username: payment.clientId.username,
+                    email: payment.clientId.email,
+                    phoneNumber: payment.clientId.phoneNumber
+                } : null
+            })
+        }));
+
+        res.json({
+            payments: formattedPayments,
+            totalPending,
+            userRole: req.user.role
         });
 
-        await newPayment.save();
-
-        res.status(201).json({ message: "Payment recorded successfully!", payment: newPayment });
     } catch (error) {
-        res.status(500).json({ message: "Error adding payment.", error: error.message });
+        console.error('Error fetching payment history:', error);
+        res.status(500).json({ 
+            message: 'Error fetching payment history', 
+            error: error.message 
+        });
     }
 });
 
@@ -86,11 +133,11 @@ router.post("/stripe", verifyToken, async (req, res) => {
         const { amount, paymentMethodId, bookingId } = req.body;
         const clientId = req.user.id;
   
-        // ✅ STEP 1: Get the client
+        // Get the client
         const client = await User.findById(clientId).session(session);
         if (!client) throw new Error("Client not found.");
   
-        // ✅ STEP 2: CHECK subscription & booking usage BEFORE charging Stripe
+        // Check subscription & booking usage
         const activeSubscription = await Subscription.findOne({
             clientId,
             status: "active",
@@ -113,13 +160,13 @@ router.post("/stripe", verifyToken, async (req, res) => {
             }
         }
   
-        // ✅ STEP 4: Create Stripe paymentIntent
+        // Create Stripe paymentIntent
         const amountDue = await getOutstandingGymPayments(clientId);
 
         if (!amountDue || isNaN(amountDue) || amountDue <= 0) {
-          return res.status(409).json({ 
-            message: "No outstanding amount to charge." 
-          });
+            return res.status(409).json({ 
+                message: "No outstanding amount to charge." 
+            });
         }
         
         const finalAmount = Math.round(Math.min(amount, amountDue) * 100);
@@ -135,16 +182,16 @@ router.post("/stripe", verifyToken, async (req, res) => {
             }
         });
   
-        // ✅ STEP 5: Save payment & update balance
+        // Save payment & update balance
         await updateClientBalance(clientId, amount);
   
         const newPayment = new Payment({
             clientId,
             amount,
-            method: "stripe",
-            transactionId: paymentIntent.id,
+            paymentMethod: "credit_card",
+            description: "Stripe payment",
             status: "completed",
-            bookingId: bookingId || null // Optional: link payment to a session
+            receiptUrl: paymentIntent.charges.data[0]?.receipt_url
         });
   
         await newPayment.save({ session });
@@ -175,178 +222,26 @@ router.post("/stripe", verifyToken, async (req, res) => {
             error: error.message
         });
     }
-});  
-
-// ✅ **Confirm Stripe Payment (Ensures Correct Deduction from DB)**
-router.post("/confirm-stripe", verifyToken, async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-        const { paymentIntentId } = req.body;
-        const clientId = req.user.id;
-
-        const client = await User.findById(clientId).session(session);
-        if (!client) throw new Error("Client not found.");
-
-        const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-
-        if (paymentIntent.status === "succeeded") {
-            const newPayment = new Payment({
-                clientId,
-                amount: paymentIntent.amount / 100,
-                method: "stripe",
-                transactionId: paymentIntent.id,
-                status: "completed"
-            });
-
-            await newPayment.save({ session });
-
-            // Update client balance
-            await updateClientBalance(clientId, newPayment.amount);
-
-            // Get updated amount due
-            const updatedAmountDue = await getOutstandingGymPayments(clientId);
-
-            await session.commitTransaction();
-            session.endSession();
-
-            console.log(`✅ Payment Confirmed. New Balance: $${updatedAmountDue}`);
-
-            res.status(201).json({
-                message: "Payment confirmed and stored successfully!",
-                payment: newPayment
-            });
-
-        } else {
-            throw new Error("Payment not yet completed.");
-        }
-    } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
-
-        console.error("❌ Error Confirming Payment:", error.message);
-
-        res.status(500).json({
-            message: "Error confirming payment.",
-            error: error.message
-        });
-    }
 });
 
-//client views their payments
-router.get("/payments/history", verifyToken, async (req, res) => {
+// Update payment status
+router.put('/:id/status', verifyToken, async (req, res) => {
     try {
-        const payments = await Payment.find({ clientId: req.user.id })
-            .sort({ paymentDate: -1 });
+        const { status, receiptUrl } = req.body;
+        const payment = await Payment.findByIdAndUpdate(
+            req.params.id,
+            { status, receiptUrl },
+            { new: true }
+        );
 
-        res.status(200).json(payments);
-    } catch (error) {
-        res.status(500).json({ message: "Error fetching payment history.", error: error.message });
-    }
-});
-
-// Update Client Payment Route
-router.put("/update-payment/:clientId", verifyToken, asyncHandler(async (req, res) => {
-    try {
-        const { clientId } = req.params;
-        const { amountPaid } = req.body;
-
-        if (!amountPaid || amountPaid <= 0) {
-            return res.status(400).json({ message: "Invalid payment amount." });
+        if (!payment) {
+            return res.status(404).json({ message: 'Payment not found' });
         }
 
-        const client = await User.findById(clientId);
-        if (!client) return res.status(404).json({ message: "Client not found." });
-
-        // Get current amount due before update
-        const currentAmountDue = await getOutstandingGymPayments(clientId);
-        console.log(`🔹 Before Update: Client Balance: $${currentAmountDue}`);
-
-        // Update the client balance
-        await updateClientBalance(clientId, amountPaid);
-        
-        // Get the updated amount due
-        const updatedAmountDue = await getOutstandingGymPayments(clientId);
-        console.log(`✅ After Update: Client Balance: $${updatedAmountDue}`);
-
-        res.status(200).json({ 
-            message: "Payment updated successfully.", 
-            amountDue: updatedAmountDue 
-        });
+        res.json(payment);
     } catch (error) {
-        console.error("❌ Update payment error:", error);
-        res.status(500).json({ message: "Server error.", error: error.message });
-    }
-}));
-
-const updateClientBalance = async (clientId, amount) => {
-    try {
-        const client = await User.findById(clientId);
-        if (!client) throw new Error("Client not found");
-        
-        // Update client account in database
-        // This function should coordinate with getOutstandingGymPayments
-        // to ensure consistency in how balances are tracked
-        
-        // Get current amount due
-        const currentAmountDue = await getOutstandingGymPayments(clientId);
-        
-        // Calculate new balance (never go below zero)
-        const newBalance = Math.max(0, currentAmountDue - amount);
-        
-        // Update whatever tracking mechanism is used by getOutstandingGymPayments
-        // This might involve updating the User model or another tracking system
-        client.balanceDue = newBalance;
-        await client.save();
-        
-        return client;
-    } catch (error) {
-        console.error("Error updating client balance:", error);
-        throw error;
-    }
-};
-
-router.post("/add", verifyToken, verifyGymOwner, async (req, res) => {
-    try {
-        const { clientId, amount, method } = req.body;
-        
-        // Check if client exists
-        const client = await User.findById(clientId);
-        if (!client) return res.status(404).json({ message: "Client not found." });
-        
-        // Get outstanding amount and validate payment
-        const amountToCharge = await getOutstandingGymPayments(clientId);
-        
-        if (!amountToCharge || isNaN(amountToCharge) || amountToCharge <= 0) {
-            return res.status(409).json({ message: "No outstanding amount to charge." });
-        }
-        
-        if (amount > amountToCharge) {
-            return res.status(400).json({ message: "Payment exceeds the due amount." });
-        }
-        
-        const newPayment = new Payment({
-            clientId,
-            amount,
-            method
-        });
-
-        await newPayment.save();
-        
-        // Use the utility function to update balance
-        await updateClientBalance(clientId, amount);
-
-        // Get updated balance after payment
-        const updatedBalance = await getOutstandingGymPayments(clientId);
-
-        res.status(201).json({ 
-            message: "Payment recorded successfully!", 
-            payment: newPayment,
-            remainingBalance: updatedBalance
-        });
-    } catch (error) {
-        res.status(500).json({ message: "Error adding payment.", error: error.message });
+        console.error('Error updating payment status:', error);
+        res.status(500).json({ message: 'Error updating payment status' });
     }
 });
 
@@ -360,5 +255,27 @@ router.get("/amount-due", verifyToken, async (req, res) => {
         res.status(500).json({ message: "Error calculating amount due.", error: error.message });
     }
 });
+
+const updateClientBalance = async (clientId, amount) => {
+    try {
+        const client = await User.findById(clientId);
+        if (!client) throw new Error("Client not found");
+        
+        // Get current amount due
+        const currentAmountDue = await getOutstandingGymPayments(clientId);
+        
+        // Calculate new balance (never go below zero)
+        const newBalance = Math.max(0, currentAmountDue - amount);
+        
+        // Update client balance
+        client.balanceDue = newBalance;
+        await client.save();
+        
+        return client;
+    } catch (error) {
+        console.error("Error updating client balance:", error);
+        throw error;
+    }
+};
 
 module.exports = router;

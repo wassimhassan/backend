@@ -57,12 +57,32 @@ const SUBSCRIPTION_BENEFITS = {
 // ✅ Gym Owner Views All Subscriptions
 router.get("/track", verifyToken, verifyGymOwner, async (req, res) => {
     try {
+        // Find the gym owner
+        const gymOwner = await GymOwner.findById(req.user.id);
+        if (!gymOwner) {
+            return res.status(404).json({ message: "Gym owner not found" });
+        }
+
+        // Find all subscriptions and populate basic client info
         const subscriptions = await Subscription.find()
-            .populate("clientId", "username email phoneNumber");
+            .populate({
+                path: 'clientId',
+                select: 'username email phoneNumber'
+            })
+            .sort({ renewalDate: 1 }); // Sort by renewal date
+
+        // If no subscriptions found, return empty array
+        if (!subscriptions || subscriptions.length === 0) {
+            return res.status(200).json([]);
+        }
 
         res.status(200).json(subscriptions);
     } catch (error) {
-        res.status(500).json({ message: "Error fetching subscriptions.", error: error.message });
+        console.error("Error fetching subscriptions:", error);
+        res.status(500).json({ 
+            message: "Error fetching subscriptions.", 
+            error: error.message 
+        });
     }
 });
 
@@ -74,13 +94,43 @@ router.put("/cancel/:id", verifyToken, verifyGymOwner, async (req, res) => {
             return res.status(404).json({ message: "Subscription not found." });
         }
 
+        // Update subscription status and required fields
         subscription.status = "canceled";
+        subscription.amountPaid = subscription.amountPaid || 0; // Keep existing amount or set to 0
+        subscription.endDate = new Date(); // Set end date to now
+        subscription.paymentInfo = {
+            method: "cash", // Use a valid enum value
+            transactionId: `CANCEL-${Date.now()}`,
+            paymentDate: new Date(),
+            status: "completed"
+        };
         await subscription.save();
+
+        // Update client's subscription status
+        const client = await User.findById(subscription.clientId);
+        if (client) {
+            client.subscriptionStatus = "canceled";
+            await client.save();
+        }
+
+        // Create a cancellation record
+        const cancellation = new Payment({
+            clientId: subscription.clientId,
+            amount: 0,
+            method: "cash",
+            transactionId: `CANCEL-${Date.now()}`,
+            status: "completed",
+            type: "subscription_cancellation"
+        });
+        
+        await cancellation.save();
         
         res.status(200).json({ 
-            message: "Subscription canceled successfully!" 
+            message: "Subscription canceled successfully!",
+            subscription
         });
     } catch (error) {
+        console.error("Error canceling subscription:", error);
         res.status(500).json({ 
             message: "Error canceling subscription.", 
             error: error.message 
@@ -92,10 +142,10 @@ router.put("/cancel/:id", verifyToken, verifyGymOwner, async (req, res) => {
 router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
     try {
         const { 
-            endDate, 
-            amountPaid, 
-            method,
-            transactionId
+            endDate = new Date(new Date().setMonth(new Date().getMonth() + 1)), // Default to 1 month from now
+            amountPaid = 0,
+            method = "cash",
+            transactionId = "N/A"
         } = req.body;
         
         const subscription = await Subscription.findById(req.params.id);
@@ -108,7 +158,8 @@ router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
             clientId: subscription.clientId,
             amount: amountPaid,
             method,
-            transactionId
+            transactionId,
+            status: "completed"
         });
         
         const savedPayment = await payment.save();
@@ -118,11 +169,13 @@ router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
         const owner = await GymOwner.findById(req.user.id);
         
         if (client) {
+            if (!client.payments) client.payments = [];
             client.payments.push(savedPayment._id);
             await client.save();
         }
         
         if (owner) {
+            if (!owner.payments) owner.payments = [];
             owner.payments.push(savedPayment._id);
             await owner.save();
         }
@@ -135,7 +188,9 @@ router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
         subscription.amountPaid = amountPaid;
         subscription.paymentInfo = {
             method,
-            transactionId
+            transactionId,
+            paymentDate: new Date(),
+            status: "completed"
         };
         
         await subscription.save();
@@ -145,6 +200,7 @@ router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
             subscription
         });
     } catch (error) {
+        console.error("Error renewing subscription:", error);
         res.status(500).json({ 
             message: "Error renewing subscription.", 
             error: error.message 
@@ -267,4 +323,84 @@ router.get("/plans", async (req, res) => {
     }
 });
 
+// Get All Active Subscriptions (for Gym Owner)
+router.get("/active-subscriptions", verifyToken, verifyGymOwner, async (req, res) => {
+    try {
+        const now = new Date();
+        
+        // Find all active subscriptions that haven't expired
+        const activeSubscriptions = await Subscription.find({
+            status: "active",
+            startDate: { $lte: now },
+            endDate: { $gte: now }
+        })
+        .populate({
+            path: "clientId",
+            select: "username email phoneNumber profilePicture"
+        })
+        .sort({ endDate: 1 }) // Sort by end date, soonest first
+        .lean();
+
+        // Add a "daysRemaining" field to each subscription
+        const subscriptionsWithDaysRemaining = activeSubscriptions.map(sub => {
+            const daysRemaining = Math.ceil((new Date(sub.endDate) - now) / (1000 * 60 * 60 * 24));
+            return {
+                ...sub,
+                daysRemaining
+            };
+        });
+
+        res.status(200).json({
+            count: subscriptionsWithDaysRemaining.length,
+            subscriptions: subscriptionsWithDaysRemaining
+        });
+    } catch (error) {
+        console.error("Error fetching active subscriptions:", error);
+        res.status(500).json({ 
+            message: "Error fetching active subscriptions.", 
+            error: error.message 
+        });
+    }
+});
+
+// Get All Subscriptions (including expired and pending)
+router.get("/all-subscriptions", verifyToken, verifyGymOwner, async (req, res) => {
+    try {
+        const { status, sortBy = 'endDate', order = 'asc' } = req.query;
+        
+        // Build query based on filters
+        let query = {};
+        if (status) {
+            query.status = status;
+        }
+
+        // Get all subscriptions with filtering and sorting
+        const subscriptions = await Subscription.find(query)
+            .populate({
+                path: "clientId",
+                select: "username email phoneNumber profilePicture"
+            })
+            .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
+            .lean();
+
+        const now = new Date();
+        const enrichedSubscriptions = subscriptions.map(sub => ({
+            ...sub,
+            daysRemaining: sub.status === 'active' ? 
+                Math.ceil((new Date(sub.endDate) - now) / (1000 * 60 * 60 * 24)) : 
+                0
+        }));
+
+        res.status(200).json({
+            count: enrichedSubscriptions.length,
+            subscriptions: enrichedSubscriptions
+        });
+    } catch (error) {
+        console.error("Error fetching subscriptions:", error);
+        res.status(500).json({ 
+            message: "Error fetching subscriptions.", 
+            error: error.message 
+        });
+    }
+});
 module.exports = router;

@@ -7,6 +7,8 @@ const GymOwner = require("../models/GymOwner");
 const User = require("../models/User");
 const Payment = require("../models/Payment");
 const Subscription = require("../models/Subscription");
+const Booking = require("../models/Booking");
+const Trainer = require("../models/Trainer");
 const router = express.Router();
 const asyncHandler = require("express-async-handler");
 
@@ -119,19 +121,32 @@ router.put("/update-pin", verifyGymOwnerToken, async (req, res) => {
     }
 });
 
-// Client Management Routes
-
+// Get All Clients
 // Get All Clients
 router.get("/clients", verifyGymOwnerToken, async (req, res) => {
     try {
-        // Fetch all users who signed up (assuming all users are clients)
-        const clients = await User.find({ gymOwnerId: req.owner.id }).select("-password"); 
-        if (!clients || clients.length === 0) {
+        // First find the gym owner
+        const gymOwner = await GymOwner.findById(req.owner.id);
+        if (!gymOwner) {
+            return res.status(404).json({ message: "Gym owner not found." });
+        }
+
+        // Fetch all users (clients)
+        const clients = await User.find()
+            .select("username email phoneNumber height weight dateOfBirth workoutDaysPerWeek goal sex profilePicture subscription")
+            .populate('subscription')
+            .lean();  // Convert to plain JavaScript objects for better performance
+
+        if (!clients) {
             return res.status(404).json({ message: "No clients found." });
         }
 
-        res.status(200).json(clients);
+        res.status(200).json({
+            count: clients.length,
+            clients: clients
+        });
     } catch (error) {
+        console.error("Error fetching clients:", error);
         res.status(500).json({ message: "Error fetching clients.", error: error.message });
     }
 });
@@ -178,22 +193,96 @@ router.post("/clients/add/:clientId", verifyGymOwnerToken, async (req, res) => {
 
 router.get("/unpaid-clients", verifyGymOwnerToken, verifyGymOwner, asyncHandler(async (req, res) => {
     try {
-        const unpaidClients = await User.find({ balanceDue: { $gt: 0 } })  // Only users with due balance
-            .select("username email balanceDue");
+        // Get all bookings that haven't been paid for
+        const unpaidBookings = await Booking.find({
+            paymentStatus: { $ne: "paid" },
+            sessionTime: { $lt: new Date() } // Only past sessions
+        }).populate('clientId', 'username email');
+
+        // Get all pending cash payments
+        const pendingPayments = await Payment.find({
+            status: "pending",
+            method: "cash"
+        }).populate('clientId', 'username email');
+
+        // Get all clients with active subscriptions that have unpaid amounts
+        const subscriptions = await Subscription.find({
+            status: "active",
+            paymentInfo: { $exists: true, $ne: null }
+        }).populate('clientId', 'username email');
+
+        // Combine all unpaid clients
+        const unpaidClientsMap = new Map();
+
+        // Add clients from unpaid bookings
+        unpaidBookings.forEach(booking => {
+            if (booking.clientId) {
+                unpaidClientsMap.set(booking.clientId._id.toString(), {
+                    _id: booking.clientId._id,
+                    username: booking.clientId.username,
+                    email: booking.clientId.email,
+                    balanceDue: 50, // Default session fee
+                    type: 'unpaid_booking'
+                });
+            }
+        });
+
+        // Add clients with pending payments
+        pendingPayments.forEach(payment => {
+            if (payment.clientId) {
+                const existing = unpaidClientsMap.get(payment.clientId._id.toString());
+                if (existing) {
+                    existing.balanceDue += payment.amount;
+                } else {
+                    unpaidClientsMap.set(payment.clientId._id.toString(), {
+                        _id: payment.clientId._id,
+                        username: payment.clientId.username,
+                        email: payment.clientId.email,
+                        balanceDue: payment.amount,
+                        type: 'pending_payment'
+                    });
+                }
+            }
+        });
+
+        // Add clients with subscription payments due
+        subscriptions.forEach(sub => {
+            if (sub.clientId && sub.amountPaid === 0) {
+                const existing = unpaidClientsMap.get(sub.clientId._id.toString());
+                if (existing) {
+                    existing.balanceDue += sub.amountPaid;
+                } else {
+                    unpaidClientsMap.set(sub.clientId._id.toString(), {
+                        _id: sub.clientId._id,
+                        username: sub.clientId.username,
+                        email: sub.clientId.email,
+                        balanceDue: sub.amountPaid,
+                        type: 'subscription_payment'
+                    });
+                }
+            }
+        });
+
+        // Convert map to array
+        const unpaidClients = Array.from(unpaidClientsMap.values());
 
         res.status(200).json(unpaidClients);
     } catch (error) {
-        res.status(500).json({ message: "Error fetching unpaid clients.", error: error.message });
+        console.error("Error fetching unpaid clients:", error);
+        res.status(500).json({ 
+            message: "Error fetching unpaid clients.", 
+            error: error.message 
+        });
     }
 }));
 
 
-// ✅ Gym Owner Accepts Cash Payment
+// Gym Owner Accepts Cash Payment
 router.post("/accept-cash-payment", verifyGymOwnerToken, verifyGymOwner, async (req, res) => {
     try {
         const { clientId, amount } = req.body;
 
-        // Check client exists
+        // Check client exists (using User model directly)
         const client = await User.findById(clientId);
         if (!client) return res.status(404).json({ message: "Client not found." });
 
@@ -210,7 +299,9 @@ router.post("/accept-cash-payment", verifyGymOwnerToken, verifyGymOwner, async (
         const newPayment = new Payment({
             clientId,
             amount,
-            method: "cash",
+            paymentMethod: "cash",
+            status: "completed",
+            description: "Cash payment"
         });
         await newPayment.save();
 
@@ -244,6 +335,39 @@ router.delete("/clients/remove/:clientId", verifyGymOwnerToken, async (req, res)
     } catch (error) {
         res.status(500).json({ message: "Error removing client.", error: error.message });
     }
+});
+
+// Change gym owner password
+router.put("/change-password", verifyGymOwnerToken, verifyGymOwner, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const ownerId = req.owner.id;
+
+    // Find gym owner
+    const owner = await GymOwner.findById(ownerId);
+    if (!owner) {
+      return res.status(404).json({ message: "Gym owner not found" });
+    }
+
+    // Verify current password
+    const isMatch = await bcrypt.compare(currentPassword, owner.pin);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update password
+    owner.pin = hashedPassword;
+    await owner.save();
+
+    res.status(200).json({ message: "Password changed successfully" });
+  } catch (error) {
+    console.error("Error changing password:", error);
+    res.status(500).json({ message: "Error changing password", error: error.message });
+  }
 });
 
 module.exports = router;

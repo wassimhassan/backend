@@ -296,7 +296,18 @@ router.put("/trainer/profile", verifyToken, async (req, res) => {
     }
 });
 
-// Fetch Clients Assigned to a Trainer
+// Fetch Trainer Profile Route (GET)
+router.get("/trainer/profile", verifyToken, async (req, res) => {
+    try {
+        const trainer = await Trainer.findById(req.user.id).select("-password");
+        if (!trainer) {
+            return res.status(404).json({ message: "Trainer not found." });
+        }
+        res.status(200).json(trainer);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching trainer profile.", error: error.message });
+    }
+});
 // Fetch ALL Clients for Trainer (permanently)
 router.get("/trainer/clients", verifyToken, async (req, res) => {
     try {

@@ -27,7 +27,7 @@ const verifyToken = (req, res, next) => {
 // ✅ Book a session
 router.post("/book-session", verifyToken, async (req, res) => {
     try {
-        const { trainerId, sessionTime, paymentMethod } = req.body; // Add paymentMethod parameter
+        const { trainerId, sessionTime, paymentMethod } = req.body;
         const clientId = req.user.id;
 
         if (!trainerId || !sessionTime) {
@@ -62,59 +62,57 @@ router.post("/book-session", verifyToken, async (req, res) => {
             return res.status(400).json({ message: "You have already booked this session." });
         }
 
-        // Check for subscription but don't block booking if paymentMethod is provided
-        const now = new Date();
-        const activeSubscription = await Subscription.findOne({
-            clientId,
-            status: "active",
-            startDate: { $lte: now },
-            endDate: { $gte: now }
-        });
-
-        let useSubscription = false;
-        
-        // Only use subscription if active and hasn't exceeded monthly limit
-        if (activeSubscription) {
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-            const currentMonthBookings = await Booking.countDocuments({
+        // Check for subscription if using subscription payment method
+        let subscription = null;
+        if (paymentMethod === "subscription") {
+            const now = new Date();
+            subscription = await Subscription.findOne({
                 clientId,
-                sessionTime: { $gte: startOfMonth, $lte: endOfMonth }
+                status: "active",
+                startDate: { $lte: now },
+                endDate: { $gte: now },
+                sessionsRemaining: { $gt: 0 }
             });
 
-            if (currentMonthBookings < activeSubscription.maxBookingsPerMonth) {
-                useSubscription = true;
+            if (!subscription) {
+                return res.status(400).json({ 
+                    message: "No active subscription with remaining sessions found." 
+                });
             }
         }
 
-        // Create booking with appropriate payment status
-        const newBooking = new Booking({
+        // Create the booking
+        const booking = new Booking({
             trainerId,
             clientId,
             sessionTime: sessionDate,
-            status: "confirmed",
-            paymentStatus: useSubscription ? "paid" : (paymentMethod === "creditCard" ? "paid" : "pending"),
-            paymentMethod: useSubscription ? "subscription" : paymentMethod
+            paymentMethod,
+            status: "confirmed"
         });
 
-        await newBooking.save();
+        await booking.save();
 
-        if (!trainer.clients.includes(clientId)) {
-            trainer.clients.push(clientId);
-            await trainer.save();
+        // If using subscription, decrement the remaining sessions
+        if (subscription) {
+            subscription.sessionsRemaining -= 1;
+            await subscription.save();
         }
 
         res.status(201).json({ 
-            message: useSubscription ? 
-                "Session booked successfully with your subscription!" : 
-                "Session booked successfully!",
-            booking: newBooking 
+            message: "Session booked successfully!",
+            booking,
+            subscription: subscription ? {
+                planType: subscription.planType,
+                sessionsRemaining: subscription.sessionsRemaining,
+                totalSessions: subscription.totalSessions
+            } : null
         });
-
     } catch (error) {
         console.error("Error booking session:", error);
-        res.status(500).json({ message: "Error booking session.", error: error.message });
+        res.status(500).json({ 
+            message: "Error booking session",
+            error: error.message 
+        });
     }
 });
 

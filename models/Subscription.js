@@ -2,33 +2,19 @@ const mongoose = require("mongoose");
 
 const SubscriptionSchema = new mongoose.Schema({
     clientId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    planType: { type: String, enum: ["basic", "premium", "pro"], required: true },
-    startDate: { type: Date, default: Date.now },
-    renewalDate: { type: Date, required: true },
+    gymOwnerId: { type: mongoose.Schema.Types.ObjectId, ref: "GymOwner", required: true },
+    planType: { type: String, required: true, enum: ["basic", "premium", "elite"] },
+    startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
-    status: { type: String, enum: ["active", "expired", "canceled", "pending"], default: "active" },
-    amountPaid: { type: Number, required: true },
+    status: { type: String, required: true, enum: ["active", "expired", "canceled"], default: "active" },
     paymentInfo: {
-        method: { 
-            type: String, 
-            enum: ["stripe", "cash", "credit_card"],  
-        },
-        transactionId: { 
-            type: String, 
-            required: function() { return this.method !== "cash"; }  //  Required only for online methods
-        },
-        paymentDate: { 
-            type: Date, 
-            default: Date.now  
-        },
-        status: { 
-            type: String, 
-            enum: ["pending", "completed", "failed"], 
-            default: "pending" 
-        }
+        amount: { type: Number, required: true },
+        method: { type: String, required: true },
+        transactionId: { type: String, required: true },
+        date: { type: Date, required: true }
     },
-    sessionDiscount: { type: Number, default: 0 },
-    maxBookingsPerMonth: { type: Number, default: 10 }
+    sessionsRemaining: { type: Number, required: true, default: 0 },
+    totalSessions: { type: Number, required: true, default: 0 }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Subscription", SubscriptionSchema);
