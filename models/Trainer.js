@@ -18,8 +18,6 @@ const TrainerSchema = new mongoose.Schema({
     specialties: [{ type: String }],
     
     availableSlots: [{ type: mongoose.Schema.Types.ObjectId, ref: "TrainerAvailability" }], // Reference availability
-
-    clients: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     rating: { type: Number, default: 0 },
     reviews: [{ 
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, 

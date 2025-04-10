@@ -309,17 +309,44 @@ router.get("/trainer/profile", verifyToken, async (req, res) => {
     }
 });
 // Fetch ALL Clients for Trainer (permanently)
-router.get("/trainer/clients", verifyToken, async (req, res) => {
-    try {
-      const clients = await User.find({ role: "client" }).select("name _id");
-      res.status(200).json({ clients });
-    } catch (error) {
-      res.status(500).json({
-        message: "Error retrieving clients.",
-        error: error.message,
-      });
+router.get('/trainer/clients', verifyToken, async (req, res) => {
+  try {
+    console.log('Fetching clients for trainer:', req.user.id);
+    
+    const trainerId = req.user.id;
+    
+    // First verify the trainer exists
+    const trainer = await Trainer.findById(trainerId);
+    if (!trainer) {
+      console.log('Trainer not found:', trainerId);
+      return res.status(404).json({ message: 'Trainer not found' });
     }
-  });
+
+    console.log('Finding bookings for trainer:', trainerId);
+    const bookings = await Booking.find({ trainerId })
+      .populate('clientId', 'username email name')
+      .sort({ date: -1 });
+
+    console.log('Found bookings:', bookings.length);
+    
+    const clientMap = new Map();
+    bookings.forEach(booking => {
+      if (booking.clientId && !clientMap.has(booking.clientId._id.toString())) {
+        clientMap.set(booking.clientId._id.toString(), booking.clientId);
+      }
+    });
+
+    console.log('Unique clients found:', clientMap.size);
+    res.json({ clients: Array.from(clientMap.values()) });
+  } catch (error) {
+    console.error('Detailed error in fetching clients:', error);
+    res.status(500).json({ 
+      message: 'Error fetching clients',
+      error: error.message,
+      stack: error.stack 
+    });
+  }
+});
   
 
 // Update Trainer Availability
