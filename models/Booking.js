@@ -1,24 +1,52 @@
+// models/Booking.js
 const mongoose = require("mongoose");
+const Schema = mongoose.Schema;
 
-const bookingSchema = new mongoose.Schema({
-    trainerId: { type: mongoose.Schema.Types.ObjectId, ref: "Trainer", required: true },
-    clientId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    date: { type: Date, required: true },
-    time: { type: String, required: true },
+const BookingSchema = new Schema({
+    trainerId: {
+        type: Schema.Types.ObjectId,
+        ref: "Trainer",
+        required: true
+    },
+    clientId: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        required: true
+    },
+    sessionTime: {
+        type: Date,
+        required: true
+    },
+    // Add these required fields to match your validation
+    date: {
+        type: String,
+        required: true
+    },
+    time: {
+        type: String,
+        required: true
+    },
+    paymentMethod: {
+        type: String,
+        enum: ["cash", "creditCard", "subscription", "inPerson"],
+        default: "cash"
+    },
     status: {
         type: String,
-        enum: ['pending', 'confirmed', 'completed', 'cancelled'],
-        default: 'pending'
+        enum: ["pending", "confirmed", "canceled", "completed"],
+        default: "pending"
     },
-    isCompleted: {
+    completed: {
         type: Boolean,
         default: false
+    },
+    notes: {
+        type: String
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
     }
-}, { timestamps: true });
+});
 
-// Add index for better query performance
-bookingSchema.index({ trainerId: 1 });
-bookingSchema.index({ clientId: 1 });
-bookingSchema.index({ date: 1 });
-
-module.exports = mongoose.model("Booking", bookingSchema);
+module.exports = mongoose.model("Booking", BookingSchema);

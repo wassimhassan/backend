@@ -62,7 +62,7 @@ router.get('/history', verifyToken, async (req, res) => {
             if (!owner) {
                 return res.status(404).json({ message: "Gym Owner not found." });
             }
-            
+
             payments = await Payment.find({ _id: { $in: owner.payments } })
                 .populate("clientId", "username email phoneNumber")
                 .sort({ date: -1 });
@@ -74,17 +74,17 @@ router.get('/history', verifyToken, async (req, res) => {
 
             // Calculate total pending for clients only
             const pendingResult = await Payment.aggregate([
-                { 
-                    $match: { 
-                        clientId: new mongoose.Types.ObjectId(req.user.id), 
-                        status: 'pending' 
-                    } 
+                {
+                    $match: {
+                        clientId: new mongoose.Types.ObjectId(req.user.id),
+                        status: 'pending'
+                    }
                 },
-                { 
-                    $group: { 
-                        _id: null, 
-                        total: { $sum: '$amount' } 
-                    } 
+                {
+                    $group: {
+                        _id: null,
+                        total: { $sum: '$amount' }
+                    }
                 }
             ]);
 
@@ -117,104 +117,128 @@ router.get('/history', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error('Error fetching payment history:', error);
-        res.status(500).json({ 
-            message: 'Error fetching payment history', 
-            error: error.message 
+        res.status(500).json({
+            message: 'Error fetching payment history',
+            error: error.message
         });
     }
 });
 
-// Process Stripe Payment
 router.post("/stripe", verifyToken, async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
-  
+
     try {
         const { amount, paymentMethodId, bookingId } = req.body;
         const clientId = req.user.id;
-  
+
+        // Validate the amount is greater than or equal to 0.50 USD
+        const MINIMUM_CHARGE_AMOUNT = 50; // 50 cents, in cents (Stripe accepts amounts in cents)
+        const paymentAmount = Math.max(amount * 100, MINIMUM_CHARGE_AMOUNT); // Convert to cents and ensure min value
+
+        if (paymentAmount < MINIMUM_CHARGE_AMOUNT) {
+            return res.status(400).json({
+                message: `Amount must be at least 50 cents. You are trying to pay ${amount}.`
+            });
+        }
+
         // Get the client
         const client = await User.findById(clientId).session(session);
         if (!client) throw new Error("Client not found.");
-  
-        // Check subscription & booking usage
-        const activeSubscription = await Subscription.findOne({
-            clientId,
-            status: "active",
-            startDate: { $lte: new Date() },
-            endDate: { $gte: new Date() }
-        });
-  
-        if (activeSubscription) {
-            const { maxBookingsPerMonth } = activeSubscription;
-            const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-            const endOfMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
-  
-            const bookingCount = await Booking.countDocuments({
-                clientId,
-                sessionTime: { $gte: startOfMonth, $lte: endOfMonth }
-            });
-  
-            if (bookingCount < maxBookingsPerMonth) {
-                throw new Error("You have an active subscription with unused bookings. No payment required.");
+
+        // If bookingId is provided, verify the booking exists
+        let booking = null;
+        if (bookingId) {
+            booking = await Booking.findById(bookingId).session(session);
+            if (!booking) {
+                throw new Error("Booking not found.");
+            }
+
+            // Verify that the booking belongs to this client
+            if (booking.clientId.toString() !== clientId) {
+                throw new Error("This booking does not belong to you.");
             }
         }
-  
-        // Create Stripe paymentIntent
-        const amountDue = await getOutstandingGymPayments(clientId);
+
+        // Calculate amount due (if needed, example logic to check outstanding amount)
+        const amountDue = await getOutstandingGymPayments(clientId).catch(err => {
+            console.error("Error getting outstanding payments:", err);
+            return 0; // Default to 0 if there's an error
+        });
 
         if (!amountDue || isNaN(amountDue) || amountDue <= 0) {
-            return res.status(409).json({ 
-                message: "No outstanding amount to charge." 
+            return res.status(409).json({
+                message: "No outstanding amount to charge."
             });
         }
-        
-        const finalAmount = Math.round(Math.min(amount, amountDue) * 100);
-        
+
+        // Create paymentIntent with the finalAmount
         const paymentIntent = await stripe.paymentIntents.create({
-            amount: finalAmount,
-            currency: "usd",
+            amount: paymentAmount, // Charge in cents
+            currency: 'usd', // Example currency
             payment_method: paymentMethodId,
             confirm: true,
             automatic_payment_methods: {
                 enabled: true,
-                allow_redirects: "never"
+                allow_redirects: "never" // Disable redirects to ensure no redirect-based payment methods
             }
         });
-  
-        // Save payment & update balance
-        await updateClientBalance(clientId, amount);
-  
+
+        console.log("PaymentIntent:", paymentIntent);
+
+        // Ensure paymentIntent has a charge and data is accessible
+        if (!paymentIntent || !paymentIntent.latest_charge) {
+            throw new Error("Payment failed: No charge information available.");
+        }
+
+        // Fetch the charge using the latest charge ID
+        const charge = await stripe.charges.retrieve(paymentIntent.latest_charge);
+
+        if (!charge) {
+            throw new Error("Payment failed: Charge could not be retrieved.");
+        }
+
+        // Record the payment
+        await updateClientBalance(clientId, paymentAmount / 100); // Convert back to dollars for client balance update
+
         const newPayment = new Payment({
             clientId,
-            amount,
+            amount: paymentAmount / 100, // Convert back to dollars
             paymentMethod: "credit_card",
-            description: "Stripe payment",
+            description: bookingId ? "Payment for training session" : "Stripe payment",
             status: "completed",
-            receiptUrl: paymentIntent.charges.data[0]?.receipt_url
+            receiptUrl: charge.receipt_url || "Receipt URL not available."
         });
-  
+
         await newPayment.save({ session });
-  
+
+        // Update booking payment status if payment is for booking
+        if (booking) {
+            booking.paymentStatus = "paid";
+            booking.paymentMethod = "creditCard";
+            await booking.save({ session });
+        }
+
         await session.commitTransaction();
         session.endSession();
-  
-        // Get updated amount due after payment
+
+        // Get updated client balance after payment
         const updatedAmountDue = await getOutstandingGymPayments(clientId);
-  
+
         res.status(200).json({
             message: "Payment successful!",
-            amountPaid: amount,
+            amountPaid: paymentAmount / 100,
             clientBalance: updatedAmountDue,
-            clientSecret: paymentIntent.client_secret
+            clientSecret: paymentIntent.client_secret,
+            bookingUpdated: bookingId ? true : false
         });
-  
+
     } catch (error) {
         await session.abortTransaction();
         session.endSession();
-  
+
         console.error("❌ Payment Failed:", error.message);
-  
+
         res.status(500).json({
             message: error.message.includes("No payment required")
                 ? error.message
@@ -260,17 +284,17 @@ const updateClientBalance = async (clientId, amount) => {
     try {
         const client = await User.findById(clientId);
         if (!client) throw new Error("Client not found");
-        
+
         // Get current amount due
         const currentAmountDue = await getOutstandingGymPayments(clientId);
-        
+
         // Calculate new balance (never go below zero)
         const newBalance = Math.max(0, currentAmountDue - amount);
-        
+
         // Update client balance
         client.balanceDue = newBalance;
         await client.save();
-        
+
         return client;
     } catch (error) {
         console.error("Error updating client balance:", error);

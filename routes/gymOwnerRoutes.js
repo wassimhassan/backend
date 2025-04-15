@@ -276,41 +276,106 @@ router.get("/unpaid-clients", verifyGymOwnerToken, verifyGymOwner, asyncHandler(
     }
 }));
 
-
 // Gym Owner Accepts Cash Payment
 router.post("/accept-cash-payment", verifyGymOwnerToken, verifyGymOwner, async (req, res) => {
     try {
         const { clientId, amount } = req.body;
+        const paymentAmount = parseFloat(amount);
 
-        // Check client exists (using User model directly)
+        if (!paymentAmount || paymentAmount <= 0) {
+            return res.status(400).json({ message: "Invalid payment amount" });
+        }
+
+        // Check client exists
         const client = await User.findById(clientId);
         if (!client) return res.status(404).json({ message: "Client not found." });
 
-        // Ensure amount doesn't exceed balance due
-        if (amount > client.balanceDue) {
-            return res.status(400).json({ message: "Payment exceeds balance due." });
+        // Get unpaid bookings for the client
+        const unpaidBookings = await Booking.find({
+            clientId: clientId,
+            paymentStatus: { $ne: "paid" },
+            sessionTime: { $lt: new Date() }
+        }).sort({ sessionTime: 1 }); // Process oldest bookings first
+
+        if (!unpaidBookings.length) {
+            return res.status(404).json({ message: "No unpaid bookings found for this client." });
         }
 
-        // Reduce client balance
-        client.balanceDue -= amount;
-        await client.save();
-
-        // Record payment
+        // Record the payment
         const newPayment = new Payment({
             clientId,
-            amount,
+            amount: paymentAmount,
             paymentMethod: "cash",
             status: "completed",
-            description: "Cash payment"
+            description: "Cash payment for unpaid balance"
         });
         await newPayment.save();
 
-        res.status(200).json({ message: "Cash payment accepted successfully!", payment: newPayment });
+        // Add payment to client's payment history
+        if (!client.payments) {
+            client.payments = [];
+        }
+        client.payments.push(newPayment._id);
+        await client.save();
+
+        // Apply payment to unpaid bookings
+        let remainingAmount = paymentAmount;
+        let bookingsUpdated = 0;
+
+        for (const booking of unpaidBookings) {
+            if (remainingAmount <= 0) break;
+
+            const sessionCost = booking.sessionCost || 50; // Default session cost if not defined
+
+            if (remainingAmount >= sessionCost) {
+                // Mark the booking as paid
+                await Booking.findByIdAndUpdate(booking._id, { paymentStatus: "paid" }, { new: true });
+                bookingsUpdated++;
+                remainingAmount -= sessionCost;
+            } else {
+                break; // Stop if the remaining amount is less than the session cost
+            }
+        }
+
+        // Calculate remaining unpaid balance after payment
+        const remainingUnpaidBookings = await Booking.find({
+            clientId: clientId,
+            paymentStatus: { $ne: "paid" },
+            sessionTime: { $lt: new Date() }
+        });
+
+        let remainingBalance = 0;
+        remainingUnpaidBookings.forEach(booking => {
+            remainingBalance += booking.sessionCost || 50;
+        });
+
+        // Update the client's balanceDue after payment
+        client.balanceDue = remainingBalance;
+        await client.save();
+
+        const updatedClient = {
+            _id: client._id,
+            username: client.username,
+            email: client.email,
+            balanceDue: remainingBalance
+        };
+
+        res.status(200).json({
+            message: "Cash payment accepted successfully!",
+            payment: newPayment,
+            client: updatedClient,
+            processed: {
+                initialBalance: paymentAmount,
+                bookingsUpdated,
+                amountApplied: paymentAmount,
+                newBalance: remainingBalance
+            }
+        });
     } catch (error) {
+        console.error("Error processing cash payment:", error);
         res.status(500).json({ message: "Error processing cash payment.", error: error.message });
     }
 });
-
 
 // Remove a Client from Management
 router.delete("/clients/remove/:clientId", verifyGymOwnerToken, async (req, res) => {

@@ -19,8 +19,10 @@ const authMiddleware = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (decoded.role === "trainer") {
       req.user = await Trainer.findById(decoded.id).select("-password");
+      req.user.role = "trainer"; // Ensure role is set
     } else if (decoded.role === "client") {
       req.user = await Client.findById(decoded.id).select("-password");
+      req.user.role = "client"; // Ensure role is set
     } else {
       return res.status(403).json({ error: "Unauthorized role" });
     }
@@ -52,9 +54,15 @@ router.post(
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
     try {
+      // Check if user is a trainer
+      if (req.user.role !== "trainer") {
+        return res.status(403).json({ error: "Only trainers can create workout plans" });
+      }
+
       const trainerId = req.user.id;
       const { title, description, exercises, assignedClients } = req.body;
 
+      // Convert client IDs to ObjectIds and validate them
       const clientIds = assignedClients?.map(clientId =>
         mongoose.Types.ObjectId.isValid(clientId) ? new mongoose.Types.ObjectId(clientId) : null
       ).filter(id => id !== null);
@@ -63,14 +71,15 @@ router.post(
         title,
         description,
         exercises,
-        assignedClients: clientIds,
+        assignedClients: clientIds || [],
         createdBy: trainerId,
       });
 
       await newWorkoutPlan.save();
       res.status(201).json(newWorkoutPlan);
     } catch (err) {
-      res.status(500).json({ error: 'Server error' });
+      console.error("Create workout error:", err);
+      res.status(500).json({ error: 'Server error', details: err.message });
     }
   }
 );
@@ -79,25 +88,32 @@ router.post(
  🔵 GET All Workout Plans [GET /workouts]
 -------------------------------------------- */
 router.get('/', authMiddleware, async (req, res) => {
-    try {
-      const userId = req.user.id;
-  
-      let workoutPlans = [];
-  
-      if (req.user.role === "trainer") {
-        // Trainer gets workouts they created
-        workoutPlans = await WorkoutPlan.find({ createdBy: userId });
-      } else if (req.user.role === "client") {
-        // Client gets workouts assigned to them
-        workoutPlans = await WorkoutPlan.find({ assignedClients: userId });
-      }
-  
-      res.status(200).json(workoutPlans);
-    } catch (err) {
-      res.status(500).json({ error: 'Server error', detail: err.message });
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    
+    console.log(`Fetching workouts for: ${userRole} with ID: ${userId}`);
+    
+    let workoutPlans = [];
+    
+    if (userRole === "trainer") {
+      // Trainer gets workouts they created
+      workoutPlans = await WorkoutPlan.find({ createdBy: userId });
+    } else if (userRole === "client") {
+      // Client gets workouts assigned to them
+      workoutPlans = await WorkoutPlan.find({ 
+        assignedClients: { $in: [userId] } 
+      });
+      
+      console.log(`Found ${workoutPlans.length} plans for client ${userId}`);
     }
-  });
-  
+    
+    res.status(200).json(workoutPlans);
+  } catch (err) {
+    console.error("Get all workouts error:", err);
+    res.status(500).json({ error: 'Server error', detail: err.message });
+  }
+});
 
 /* -------------------------------------------
  🔍 GET One Workout Plan [GET /workouts/:id]
@@ -105,6 +121,8 @@ router.get('/', authMiddleware, async (req, res) => {
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
+    const userRole = req.user.role;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ error: 'Invalid workout plan ID' });
@@ -113,14 +131,20 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const plan = await WorkoutPlan.findById(id);
     if (!plan) return res.status(404).json({ error: 'Workout plan not found' });
 
-    // Only creator can view their own plan
-    if (plan.createdBy.toString() !== req.user.id) {
+    // Allow access if user is the creator OR if client is assigned to this plan
+    const isCreator = plan.createdBy.toString() === userId;
+    const isAssignedClient = plan.assignedClients.some(
+      clientId => clientId.toString() === userId
+    );
+
+    if (!(isCreator || (userRole === 'client' && isAssignedClient))) {
       return res.status(403).json({ error: 'Unauthorized access' });
     }
 
     res.status(200).json(plan);
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    console.error("Get one workout error:", err);
+    res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
@@ -145,6 +169,12 @@ router.put(
     try {
       const { id } = req.params;
       const trainerId = req.user.id;
+      const userRole = req.user.role;
+
+      // Only trainers can update workout plans
+      if (userRole !== "trainer") {
+        return res.status(403).json({ error: 'Only trainers can update workout plans' });
+      }
 
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(400).json({ error: 'Invalid workout plan ID' });
@@ -157,10 +187,20 @@ router.put(
         return res.status(403).json({ error: 'Unauthorized to update this workout plan' });
       }
 
+      // Handle assignedClients if present in the request
+      if (req.body.assignedClients) {
+        const clientIds = req.body.assignedClients.map(clientId =>
+          mongoose.Types.ObjectId.isValid(clientId) ? new mongoose.Types.ObjectId(clientId) : null
+        ).filter(id => id !== null);
+        
+        req.body.assignedClients = clientIds;
+      }
+
       const updatedPlan = await WorkoutPlan.findByIdAndUpdate(id, req.body, { new: true });
       res.status(200).json(updatedPlan);
     } catch (err) {
-      res.status(500).json({ error: 'Server error' });
+      console.error("Update workout error:", err);
+      res.status(500).json({ error: 'Server error', details: err.message });
     }
   }
 );
@@ -172,6 +212,12 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const trainerId = req.user.id;
+    const userRole = req.user.role;
+
+    // Only trainers can delete workout plans
+    if (userRole !== "trainer") {
+      return res.status(403).json({ error: 'Only trainers can delete workout plans' });
+    }
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ error: 'Invalid workout plan ID' });
@@ -187,7 +233,52 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     await workoutPlan.deleteOne();
     res.status(200).json({ message: 'Workout plan deleted successfully' });
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    console.error("Delete workout error:", err);
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+/* -------------------------------------------
+ ✅ Mark Exercise as Completed [PATCH /workouts/:id/exercises/:exerciseIndex]
+-------------------------------------------- */
+router.patch('/:id/exercises/:exerciseIndex', authMiddleware, async (req, res) => {
+  try {
+    const { id, exerciseIndex } = req.params;
+    const clientId = req.user.id;
+
+    if (req.user.role !== 'client') {
+      return res.status(403).json({ error: 'Only clients can mark exercises as completed' });
+    }
+
+    const workoutPlan = await WorkoutPlan.findById(id);
+    if (!workoutPlan) {
+      return res.status(404).json({ error: 'Workout plan not found' });
+    }
+
+    // Check if client is assigned to this workout
+    if (!workoutPlan.assignedClients.includes(clientId)) {
+      return res.status(403).json({ error: 'You are not assigned to this workout plan' });
+    }
+
+    // Check if exercise index is valid
+    if (exerciseIndex < 0 || exerciseIndex >= workoutPlan.exercises.length) {
+      return res.status(400).json({ error: 'Invalid exercise index' });
+    }
+
+    // Mark exercise as completed
+    await workoutPlan.markExerciseCompleted(clientId, parseInt(exerciseIndex));
+
+    // Get updated progress
+    const progress = workoutPlan.getClientProgress(clientId);
+
+    res.status(200).json({
+      message: 'Exercise marked as completed',
+      progress,
+      isWorkoutCompleted: progress.isCompleted
+    });
+  } catch (err) {
+    console.error("Mark exercise completed error:", err);
+    res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 

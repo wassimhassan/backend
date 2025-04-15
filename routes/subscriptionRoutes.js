@@ -54,7 +54,7 @@ const SUBSCRIPTION_BENEFITS = {
     pro: { sessionDiscount: 15, maxBookingsPerMonth: 25 }
 };
 
-// ✅ Gym Owner Views All Subscriptions
+// Gym Owner Views All Subscriptions (including pending)
 router.get("/track", verifyToken, verifyGymOwner, async (req, res) => {
     try {
         // Find the gym owner
@@ -63,15 +63,14 @@ router.get("/track", verifyToken, verifyGymOwner, async (req, res) => {
             return res.status(404).json({ message: "Gym owner not found" });
         }
 
-        // Find all subscriptions and populate basic client info
-        const subscriptions = await Subscription.find()
+        // Find all subscriptions, including pending, active, and canceled
+        const subscriptions = await Subscription.find({ gymOwnerId: req.user.id })
             .populate({
                 path: 'clientId',
                 select: 'username email phoneNumber'
             })
             .sort({ renewalDate: 1 }); // Sort by renewal date
 
-        // If no subscriptions found, return empty array
         if (!subscriptions || subscriptions.length === 0) {
             return res.status(200).json([]);
         }
@@ -86,7 +85,55 @@ router.get("/track", verifyToken, verifyGymOwner, async (req, res) => {
     }
 });
 
-// Cancel a Subscription
+// ✅ Approve Subscription
+router.put("/approve/:id", verifyToken, verifyGymOwner, async (req, res) => {
+    try {
+        const subscription = await Subscription.findById(req.params.id);
+        if (!subscription) {
+            return res.status(404).json({ message: "Subscription not found." });
+        }
+
+        // Check if the subscription is in pending status
+        if (subscription.status !== "pending") {
+            return res.status(400).json({ message: "Subscription is not pending." });
+        }
+
+        // Set required fields for approval
+        subscription.status = "active";
+        
+        // Set payment information (you can adjust the amount if needed)
+        subscription.paymentInfo = {
+            date: new Date(), // Set current date as payment date
+            amount: 0, // Adjust as needed
+            method: "cash", // Assume cash payment for now
+            transactionId: `APPROVE-${Date.now()}`,
+            status: "completed"
+        };
+
+        // Set the gym owner ID
+        subscription.gymOwnerId = req.user.id;
+
+        // Update the renewal date (set it to the end date for renewal)
+        subscription.renewalDate = new Date(subscription.endDate); // Set to the end date
+
+        // Save the updated subscription
+        await subscription.save();
+
+        res.status(200).json({ 
+            message: "Subscription approved successfully!",
+            subscription
+        });
+
+    } catch (error) {
+        console.error("Error approving subscription:", error);
+        res.status(500).json({ 
+            message: "Error approving subscription.", 
+            error: error.message 
+        });
+    }
+});
+
+// ✅ Cancel Subscription
 router.put("/cancel/:id", verifyToken, verifyGymOwner, async (req, res) => {
     try {
         const subscription = await Subscription.findById(req.params.id);
@@ -94,19 +141,25 @@ router.put("/cancel/:id", verifyToken, verifyGymOwner, async (req, res) => {
             return res.status(404).json({ message: "Subscription not found." });
         }
 
-        // Update subscription status and required fields
+        // Set required fields for cancellation
         subscription.status = "canceled";
-        subscription.amountPaid = subscription.amountPaid || 0; // Keep existing amount or set to 0
+        subscription.amountPaid = subscription.amountPaid || 0; // Ensure amountPaid is set
         subscription.endDate = new Date(); // Set end date to now
         subscription.paymentInfo = {
-            method: "cash", // Use a valid enum value
+            date: new Date(), // Set the current date as the payment date
+            amount: 0, // Set amount to 0 for cancellation (or set an appropriate value if needed)
+            method: "cash", // Payment method for cancellation
             transactionId: `CANCEL-${Date.now()}`,
-            paymentDate: new Date(),
             status: "completed"
         };
+        subscription.gymOwnerId = req.user.id; // Set the gym owner ID (if needed)
+
+        // Set renewalDate to null since subscription is canceled
+        subscription.renewalDate = null; // Set renewalDate to null for canceled subscriptions
+
         await subscription.save();
 
-        // Update client's subscription status
+        // Update the client's subscription status
         const client = await User.findById(subscription.clientId);
         if (client) {
             client.subscriptionStatus = "canceled";
@@ -120,7 +173,9 @@ router.put("/cancel/:id", verifyToken, verifyGymOwner, async (req, res) => {
             method: "cash",
             transactionId: `CANCEL-${Date.now()}`,
             status: "completed",
-            type: "subscription_cancellation"
+            type: "subscription_cancellation",
+            paymentMethod: "cash", // Add paymentMethod
+            description: "Subscription Cancellation" // Add description
         });
         
         await cancellation.save();
@@ -138,16 +193,17 @@ router.put("/cancel/:id", verifyToken, verifyGymOwner, async (req, res) => {
     }
 });
 
-// Renew a Subscription
+// ✅ Renew Subscription
 router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
     try {
         const { 
             endDate = new Date(new Date().setMonth(new Date().getMonth() + 1)), // Default to 1 month from now
             amountPaid = 0,
-            method = "cash",
-            transactionId = "N/A"
+            method = "cash",  // Default to cash
+            transactionId = "N/A",
+            description = "Subscription Renewal"  // Add default description
         } = req.body;
-        
+
         const subscription = await Subscription.findById(req.params.id);
         if (!subscription) {
             return res.status(404).json({ message: "Subscription not found." });
@@ -157,48 +213,53 @@ router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
         const payment = new Payment({
             clientId: subscription.clientId,
             amount: amountPaid,
-            method,
+            method, // This is passed to 'paymentMethod'
             transactionId,
-            status: "completed"
+            status: "completed",
+            description,  // Add description here
+            paymentMethod: method  // Map the 'method' field to 'paymentMethod'
         });
-        
+
         const savedPayment = await payment.save();
-        
+
         // Update client and gym owner payment records
         const client = await User.findById(subscription.clientId);
         const owner = await GymOwner.findById(req.user.id);
-        
+
         if (client) {
             if (!client.payments) client.payments = [];
             client.payments.push(savedPayment._id);
             await client.save();
         }
-        
+
         if (owner) {
             if (!owner.payments) owner.payments = [];
             owner.payments.push(savedPayment._id);
             await owner.save();
         }
-        
+
         // Update subscription
         subscription.startDate = new Date();
         subscription.endDate = new Date(endDate);
-        subscription.renewalDate = new Date(endDate);
+        subscription.renewalDate = new Date(endDate);  // Update renewalDate to new endDate
         subscription.status = "active";
         subscription.amountPaid = amountPaid;
         subscription.paymentInfo = {
+            date: new Date(), // Payment date for renewal
+            amount: amountPaid,
             method,
             transactionId,
-            paymentDate: new Date(),
             status: "completed"
         };
-        
+        subscription.gymOwnerId = req.user.id; // Set the gym owner ID
+
         await subscription.save();
-        
+
         res.status(200).json({ 
             message: "Subscription renewed successfully!",
             subscription
         });
+
     } catch (error) {
         console.error("Error renewing subscription:", error);
         res.status(500).json({ 
@@ -208,12 +269,12 @@ router.put("/renew/:id", verifyToken, verifyGymOwner, async (req, res) => {
     }
 });
 
-// ✅ Clients Can Purchase Subscriptions
+// Clients Can Purchase Subscriptions
 router.post("/purchase", verifyToken, async (req, res) => {
     try {
         const { planType, endDate, method, transactionId } = req.body;
         const client = await User.findById(req.user.id);
-        
+
         if (!client) return res.status(404).json({ message: "Client not found." });
 
         // 🔹 Check if the user already has an active subscription
@@ -243,18 +304,24 @@ router.post("/purchase", verifyToken, async (req, res) => {
         // 🔹 Get Subscription Benefits
         const { sessionDiscount, maxBookingsPerMonth } = SUBSCRIPTION_BENEFITS[planType];
 
-        // 🔹 Create a new subscription
+        // 🔹 Create a new subscription with pending status
         const newSubscription = new Subscription({
             clientId: client._id,
             planType,
-            startDate: new Date(),
+            startDate: new Date(),  // Set the current date as the start date
             endDate: new Date(endDate),
-            renewalDate: new Date(endDate),
+            renewalDate: new Date(),  // Set the renewal date to the same date as the activation date (startDate)
             status: method === "cash" ? "pending" : "active",  // Cash requires gym owner approval
             amountPaid: 0,  // Payment is recorded separately
-            paymentInfo: { method, transactionId: finalTransactionId },
+            paymentInfo: {
+                method, 
+                transactionId: finalTransactionId, 
+                date: new Date(),  // Set the current date as the payment date
+                amount: 0  // Payment amount (you can adjust this logic if needed)
+            },
             sessionDiscount,
-            maxBookingsPerMonth
+            maxBookingsPerMonth,
+            gymOwnerId: req.user.id  // Set gymOwnerId to the logged-in gym owner's ID
         });
 
         console.log("✅ Creating Subscription:", newSubscription);

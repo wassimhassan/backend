@@ -349,46 +349,68 @@ router.get('/trainer/clients', verifyToken, async (req, res) => {
 });
   
 
-// Update Trainer Availability
-router.put("/availability", verifyToken, async (req, res) => {
+// Update trainer availability
+router.put('/availability', verifyToken, async (req, res) => {
     try {
-        const { trainerId, availableSlots } = req.body;
-
-        if (!trainerId || !availableSlots || availableSlots.length === 0) {
-            return res.status(400).json({ message: "TrainerId and available slots are required." });
+        const { availability } = req.body;
+        
+        if (!availability || !Array.isArray(availability)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Availability array is required' 
+            });
         }
 
-        // Validate and format available slots
-        const formattedSlots = availableSlots.map(slot => {
-            if (!slot.day || !Array.isArray(slot.time)) {
-                throw new Error("Invalid slot format");
+        // Validate each time slot
+        for (const slot of availability) {
+            if (!slot.day || !slot.startTime || !slot.endTime) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Each time slot requires day, startTime, and endTime' 
+                });
             }
 
-            return {
-                day: slot.day,
-                time: slot.time.map(timeString => {
-                    const parsedTime = new Date(timeString);
-                    if (isNaN(parsedTime.getTime())) {
-                        throw new Error(`Invalid time format: ${timeString}`);
-                    }
-                    return parsedTime;
-                })
-            };
-        });
+            // Validate time format
+            const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+            if (!timeRegex.test(slot.startTime) || !timeRegex.test(slot.endTime)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Invalid time format. Use HH:MM format' 
+                });
+            }
 
-        const availability = await TrainerAvailability.findOneAndUpdate(
-            { trainerId },
-            { availableSlots: formattedSlots },
-            { new: true, upsert: true }
-        );
+            // Validate time range
+            const start = new Date(`2000-01-01T${slot.startTime}`);
+            const end = new Date(`2000-01-01T${slot.endTime}`);
+            if (start >= end) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'End time must be after start time' 
+                });
+            }
+        }
 
-        res.status(200).json({ 
-            message: "Availability updated successfully!", 
-            availability 
+        const trainer = await Trainer.findById(req.user.id);
+        if (!trainer) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Trainer not found' 
+            });
+        }
+
+        trainer.availability = availability;
+        await trainer.save();
+
+        res.json({ 
+            success: true, 
+            message: 'Availability updated successfully',
+            availability: trainer.availability 
         });
     } catch (error) {
+        console.error('Availability update error:', error);
         res.status(500).json({ 
-            message: "Server error while updating availability.",
+            success: false, 
+            message: 'Failed to update availability',
             error: error.message 
         });
     }
