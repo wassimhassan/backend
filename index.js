@@ -2,7 +2,8 @@ const express = require("express");//Web framework to handle routes and requests
 const dotenv = require("dotenv"); //Loads environment variables from .env file.
 const mongoose = require("mongoose"); //Used to interact with MongoDB.
 const cors = require("cors"); //Allows cross-origin requests (important for frontend-backend communication).
-
+const passport = require("passport");
+require("./utils/passport");
 dotenv.config(); //loads variables from .env.
 
 const app = express();
@@ -21,6 +22,7 @@ const allowedOrigins = [
 
 app.use("/uploads", express.static("uploads"));
 app.use(express.json()); // enables parsing JSON in requests.
+app.use(passport.initialize());
 
 // Prevent Mongoose Deprecation Warnings
 mongoose.set("strictQuery", false);
@@ -46,6 +48,7 @@ const subscriptionRoutes = require("./routes/subscriptionRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const workoutRoutes = require("./routes/workoutRoutes");
 const chatRoutes = require("./routes/chatRoutes");
+const progressRoutes = require("./routes/progress");
 const { scheduleSubscriptionTasks } = require('./tasks/subscriptionTasks');
 const airoutes = require("./routes/airoutes");
 
@@ -58,6 +61,7 @@ app.use("/api/payment", paymentRoutes);
 app.use("/api/workouts", workoutRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/ai", airoutes);
+app.use("/api/progress", progressRoutes);
 
 //(additional code for Socket.IO)
 const http = require("http");

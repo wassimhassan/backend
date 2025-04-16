@@ -8,6 +8,7 @@ const multerS3 = require('multer-s3');
 const s3 = require('../utils/s3');
 const asyncHandler = require("express-async-handler");
 const GymOwner  = require("../models/GymOwner"); // Import GymOwner model
+const passport = require("passport");
 
 const router = express.Router();
 require("dotenv").config();
@@ -19,6 +20,41 @@ const isValidPassword = (password) => {
     return passwordRegex.test(password);
 };
 
+// Google login entry point
+router.get(
+    "/google",
+    passport.authenticate("google", {
+      scope: ["profile", "email"], // ✅ Required to prevent missing scope error
+      session: false
+    })
+  );
+
+// Google OAuth callback route
+router.get(
+    "/google/callback",
+    passport.authenticate("google", {
+      session: false,
+      failureRedirect: "/login"
+    }),
+    (req, res) => {
+      const token = jwt.sign(
+        { id: req.user._id, email: req.user.email, role: "client" },
+        process.env.JWT_SECRET,
+        { expiresIn: "1d" }
+      );
+      
+      // Log before redirect
+      console.log("Redirecting with params:", {
+        token,
+        userId: req.user._id,
+        role: "client",
+        redirectUrl: `${process.env.FRONTEND_URL}/google-success?token=${token}&userId=${req.user._id}&role=client`
+      });
+  
+      // Redirect to frontend with token + userId + role in query params
+      res.redirect(`${process.env.FRONTEND_URL}/google-success?token=${token}&userId=${req.user._id}&role=client`);
+    }
+);
 
 router.post("/validate-credentials", async (req, res) => {
     try {

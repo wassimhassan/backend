@@ -33,16 +33,11 @@ router.post("/book-session", verifyToken, async (req, res) => {
         if (!trainerId || !sessionTime) {
             return res.status(400).json({ message: "Trainer ID and session time are required." });
         }
-        
-        // Create a Date object from the sessionTime
+
         const sessionDate = new Date(sessionTime);
         if (isNaN(sessionDate)) {
             return res.status(400).json({ message: "Invalid session time format." });
         }
-
-        // Extract date and time for the Booking model
-        const date = sessionDate.toISOString().split('T')[0]; // YYYY-MM-DD
-        const time = sessionDate.toTimeString().split(' ')[0]; // HH:MM:SS
 
         const trainer = await Trainer.findById(trainerId);
         if (!trainer) {
@@ -91,8 +86,6 @@ router.post("/book-session", verifyToken, async (req, res) => {
             trainerId,
             clientId,
             sessionTime: sessionDate,
-            date, // Add the extracted date
-            time, // Add the extracted time
             paymentMethod,
             status: "confirmed"
         });
@@ -105,7 +98,7 @@ router.post("/book-session", verifyToken, async (req, res) => {
             await subscription.save();
         }
 
-        res.status(201).json({
+        res.status(201).json({ 
             message: "Session booked successfully!",
             booking,
             subscription: subscription ? {
@@ -116,9 +109,9 @@ router.post("/book-session", verifyToken, async (req, res) => {
         });
     } catch (error) {
         console.error("Error booking session:", error);
-        res.status(500).json({
+        res.status(500).json({ 
             message: "Error booking session",
-            error: error.message
+            error: error.message 
         });
     }
 });
@@ -234,25 +227,17 @@ router.put("/booking/:id/toggle-status", verifyToken, async (req, res) => {
             return res.status(404).json({ message: "Booking not found." });
         }
 
-        // Ensure date and time fields are set
-        if (!booking.date || !booking.time) {
-            const sessionTime = new Date(booking.sessionTime);
-            booking.date = sessionTime.toISOString().split('T')[0]; // YYYY-MM-DD
-            booking.time = sessionTime.toTimeString().split(' ')[0]; // HH:MM:SS
-        }
-
         booking.completed = !booking.completed;
         await booking.save();
 
-        res.status(200).json({
+        res.status(200).json({ 
             message: `Booking marked as ${booking.completed ? "completed" : "undone"}`,
-            booking
+            booking 
         });
     } catch (error) {
         console.error("❌ Error toggling booking status:", error.message);
         res.status(500).json({ message: "Server error", error: error.message });
     }
 });
-
 
 module.exports = router;
