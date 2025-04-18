@@ -1,3 +1,4 @@
+// models/TrainerAvailability.js
 const mongoose = require("mongoose");
 
 const TrainerAvailabilitySchema = new mongoose.Schema({

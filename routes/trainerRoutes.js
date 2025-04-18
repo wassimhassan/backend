@@ -41,7 +41,8 @@ router.post("/trainer/signup", async (req, res) => {
             height,
             weight,
             dateOfBirth,
-            sex
+            sex,
+            sessionPrice
         } = req.body;
 
         // Comprehensive validation
@@ -75,7 +76,8 @@ router.post("/trainer/signup", async (req, res) => {
             height,
             weight,
             dateOfBirth,
-            sex
+            sex,
+            sessionPrice: sessionPrice || 0
         });
 
         await newTrainer.save();
@@ -130,7 +132,7 @@ router.post("/trainer/login", async (req, res) => {
     }
 });
 
-// Fetch Trainer Availability - Add verifyToken middleware back
+// Fetch Trainer Availability
 router.get("/availability/:trainerId", verifyToken, async (req, res) => {
     try {
         const { trainerId } = req.params;
@@ -138,14 +140,86 @@ router.get("/availability/:trainerId", verifyToken, async (req, res) => {
             return res.status(400).json({ message: "Invalid trainer ID format." });
         }
 
-        const availability = await TrainerAvailability.findOne({ trainerId });
-
-        if (!availability) {
-            console.warn(`No availability found for Trainer ID: ${trainerId}`);
-            return res.status(404).json({ message: "No availability found for this trainer." });
+        // Direct method using the integrated availability array
+        const trainer = await Trainer.findById(trainerId);
+        
+        if (!trainer) {
+            return res.status(404).json({ message: "Trainer not found." });
         }
-
-        res.status(200).json(availability.availableSlots);
+        
+        // If no availability, check legacy model
+        if (!trainer.availability || trainer.availability.length === 0) {
+            const legacyAvailability = await TrainerAvailability.findOne({ trainerId });
+            
+            if (!legacyAvailability) {
+                return res.status(200).json([]); // Return empty array instead of 404
+            }
+            
+            // Convert legacy format to new format
+            const formattedAvailability = [];
+            legacyAvailability.availableSlots.forEach(slot => {
+                const dayEntry = {
+                    day: slot.day,
+                    time: []
+                };
+                
+                slot.time.forEach(timeString => {
+                    // Format the date string in a way the frontend expects
+                    dayEntry.time.push(timeString);
+                });
+                
+                formattedAvailability.push(dayEntry);
+            });
+            
+            return res.status(200).json(formattedAvailability);
+        }
+        
+        // Convert the trainer's availability to the format expected by the frontend
+        const formattedAvailability = [];
+        const dayMap = {};
+        
+        // Group by day
+        trainer.availability.forEach(slot => {
+            if (!dayMap[slot.day]) {
+                dayMap[slot.day] = {
+                    day: slot.day,
+                    time: []
+                };
+            }
+            
+            // Create a date object for today and set the time
+            const today = new Date();
+            const [startHour, startMinute] = slot.startTime.split(':');
+            const date = new Date(
+                today.getFullYear(),
+                today.getMonth(),
+                today.getDate()
+            );
+            
+            // Find the next occurrence of this day
+            const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+                .indexOf(slot.day);
+            const currentDayIndex = date.getDay();
+            const daysToAdd = (dayIndex + 7 - currentDayIndex) % 7;
+            date.setDate(date.getDate() + daysToAdd);
+            
+            // Set the time
+            date.setHours(parseInt(startHour), parseInt(startMinute), 0, 0);
+            
+            // Filter out past availabilities
+            if (date > new Date()) {
+                dayMap[slot.day].time.push(date.toISOString());
+            }
+        });
+        
+        // Convert to array and filter out days with no available time slots
+        Object.values(dayMap).forEach(day => {
+            if (day.time.length > 0) {
+                formattedAvailability.push(day);
+            }
+        });
+        
+        res.status(200).json(formattedAvailability);
     } catch (error) {
         console.error("Error fetching availability:", error);
         res.status(500).json({ 
@@ -154,200 +228,6 @@ router.get("/availability/:trainerId", verifyToken, async (req, res) => {
         });
     }
 });
-
-
-// Set Trainer Availability
-router.post("/availability", verifyToken, async (req, res) => {
-    try {
-        const { trainerId, availableSlots } = req.body;
-
-        if (!trainerId || !availableSlots || availableSlots.length === 0) {
-            return res.status(400).json({ message: "TrainerId and available slots are required." });
-        }
-
-        // Improved slot validation and formatting
-        const formattedSlots = availableSlots.map(slot => {
-            // Validate day and time format
-            if (!slot.day || !Array.isArray(slot.time)) {
-                throw new Error("Invalid slot format");
-            }
-
-            return {
-                day: slot.day,
-                time: slot.time.map(timeString => {
-                    const parsedTime = new Date(timeString);
-                    if (isNaN(parsedTime.getTime())) {
-                        throw new Error(`Invalid time format: ${timeString}`);
-                    }
-                    return parsedTime;
-                })
-            };
-        });
-
-        let availability = await TrainerAvailability.findOne({ trainerId });
-
-        if (availability) {
-            availability.availableSlots = formattedSlots;
-            await availability.save();
-        } else {
-            availability = new TrainerAvailability({ 
-                trainerId, 
-                availableSlots: formattedSlots 
-            });
-            await availability.save();
-        }
-
-        res.status(201).json({ 
-            message: "Availability updated successfully!", 
-            availability 
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            message: "Server error while setting availability.",
-            error: error.message 
-        });
-    }
-});
-
-// Remove Availability for a Specific Day
-router.delete("/availability/:trainerId/:day", verifyToken, async (req, res) => {
-    try {
-        const { trainerId, day } = req.params;
-
-        const availability = await TrainerAvailability.findOne({ trainerId });
-
-        if (!availability) {
-            return res.status(404).json({ message: "Trainer availability not found." });
-        }
-
-        availability.availableSlots = availability.availableSlots.filter(
-            (slot) => slot.day !== day
-        );
-
-        await availability.save();
-
-        res.status(200).json({ 
-            message: "Availability removed successfully!", 
-            availability 
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            message: "Server error while removing availability.",
-            error: error.message 
-        });
-    }
-});
-
-// Get All Trainers
-router.get("/trainers", verifyToken, async (req, res) => {
-    try {
-        const trainers = await Trainer.find().select("-password");
-        res.status(200).json(trainers);
-    } catch (error) {
-        res.status(500).json({ 
-            message: "Server error while fetching trainers.",
-            error: error.message 
-        });
-    }
-});
-
-// Update Trainer Profile
-router.put("/trainer/profile", verifyToken, async (req, res) => {
-    try {
-        const { 
-            experience, 
-            certifications, 
-            specialties,
-            phoneNumber,
-            height,
-            weight,
-            dateOfBirth,
-            sex
-        } = req.body;
-
-        const trainer = await Trainer.findByIdAndUpdate(
-            req.user.id, 
-            {
-                experience, 
-                certifications, 
-                specialties,
-                phoneNumber,
-                height,
-                weight,
-                dateOfBirth,
-                sex
-            },
-            { new: true, select: '-password' }
-        );
-
-        if (!trainer) {
-            return res.status(404).json({ message: "Trainer not found." });
-        }
-
-        res.status(200).json({ 
-            message: "Profile updated successfully", 
-            trainer 
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            message: "Server error while updating profile.",
-            error: error.message 
-        });
-    }
-});
-
-// Fetch Trainer Profile Route (GET)
-router.get("/trainer/profile", verifyToken, async (req, res) => {
-    try {
-        const trainer = await Trainer.findById(req.user.id).select("-password");
-        if (!trainer) {
-            return res.status(404).json({ message: "Trainer not found." });
-        }
-        res.status(200).json(trainer);
-    } catch (error) {
-        res.status(500).json({ message: "Error fetching trainer profile.", error: error.message });
-    }
-});
-// Fetch ALL Clients for Trainer (permanently)
-router.get('/trainer/clients', verifyToken, async (req, res) => {
-  try {
-    console.log('Fetching clients for trainer:', req.user.id);
-    
-    const trainerId = req.user.id;
-    
-    // First verify the trainer exists
-    const trainer = await Trainer.findById(trainerId);
-    if (!trainer) {
-      console.log('Trainer not found:', trainerId);
-      return res.status(404).json({ message: 'Trainer not found' });
-    }
-
-    console.log('Finding bookings for trainer:', trainerId);
-    const bookings = await Booking.find({ trainerId })
-      .populate('clientId', 'username email name')
-      .sort({ date: -1 });
-
-    console.log('Found bookings:', bookings.length);
-    
-    const clientMap = new Map();
-    bookings.forEach(booking => {
-      if (booking.clientId && !clientMap.has(booking.clientId._id.toString())) {
-        clientMap.set(booking.clientId._id.toString(), booking.clientId);
-      }
-    });
-
-    console.log('Unique clients found:', clientMap.size);
-    res.json({ clients: Array.from(clientMap.values()) });
-  } catch (error) {
-    console.error('Detailed error in fetching clients:', error);
-    res.status(500).json({ 
-      message: 'Error fetching clients',
-      error: error.message,
-      stack: error.stack 
-    });
-  }
-});
-  
 
 // Update trainer availability
 router.put('/availability', verifyToken, async (req, res) => {
@@ -398,13 +278,66 @@ router.put('/availability', verifyToken, async (req, res) => {
             });
         }
 
-        trainer.availability = availability;
+        // Log received data for debugging
+        console.log("Received availability data:", availability);
+
+        // Update availability in trainer model
+        const enrichedAvailability = availability.map(slot => {
+            const today = new Date();
+            const targetDayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(slot.day);
+            const todayDayIndex = today.getDay();
+            const daysToAdd = (targetDayIndex + 7 - todayDayIndex) % 7;
+        
+            const date = new Date();
+            date.setDate(today.getDate() + daysToAdd);
+            
+            const fullDateString = date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+        
+            return {
+                ...slot,
+                fullDate: fullDateString
+            };
+        });
+        trainer.availability = enrichedAvailability;
+
         await trainer.save();
+        
+        // Clean up legacy availability if it exists
+        await TrainerAvailability.findOneAndDelete({ trainerId: req.user.id });
+
+        // Filter out any booked slots
+        const bookings = await Booking.find({ 
+            trainerId: req.user.id,
+            status: { $nin: ['canceled'] }
+        });
+        
+        // Filter availability to exclude booked slots
+        const availableSlots = trainer.availability.filter(slot => {
+            const slotDay = slot.day;
+            const slotStartTime = slot.startTime;
+            
+            // Check if this slot conflicts with any booking
+            return !bookings.some(booking => {
+                const bookingDate = new Date(booking.sessionTime);
+                const bookingDay = bookingDate.toLocaleDateString('en-US', { weekday: 'long' });
+                const bookingHour = bookingDate.getHours();
+                const bookingMinute = bookingDate.getMinutes();
+                const bookingTime = `${String(bookingHour).padStart(2, '0')}:${String(bookingMinute).padStart(2, '0')}`;
+                
+                console.log(`Comparing booking: ${bookingDay} ${bookingTime} with slot: ${slotDay} ${slotStartTime}`);
+                
+                return bookingDay === slotDay && bookingTime === slotStartTime;
+            });
+        });
 
         res.json({ 
             success: true, 
             message: 'Availability updated successfully',
-            availability: trainer.availability 
+            availability: availableSlots 
         });
     } catch (error) {
         console.error('Availability update error:', error);
@@ -415,5 +348,155 @@ router.put('/availability', verifyToken, async (req, res) => {
         });
     }
 });
+// Fetch Trainer Profile Route
+router.get("/trainer/profile", verifyToken, async (req, res) => {
+    try {
+        const trainer = await Trainer.findById(req.user.id).select("-password");
+        if (!trainer) {
+            return res.status(404).json({ message: "Trainer not found." });
+        }
+        res.status(200).json(trainer);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching trainer profile.", error: error.message });
+    }
+});
 
+// Update Trainer Profile
+router.put("/trainer/profile", verifyToken, async (req, res) => {
+    try {
+        const updateData = {};
+        
+        // Only include fields that are present in the request
+        const allowedFields = [
+            'experience', 'certifications', 'specialties', 
+            'phoneNumber', 'height', 'weight', 'dateOfBirth', 
+            'sex', 'sessionPrice'
+        ];
+        
+        allowedFields.forEach(field => {
+            if (req.body[field] !== undefined) {
+                updateData[field] = req.body[field];
+            }
+        });
+        
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ message: "No valid fields to update." });
+        }
+
+        const trainer = await Trainer.findByIdAndUpdate(
+            req.user.id, 
+            updateData,
+            { new: true, select: '-password' }
+        );
+
+        if (!trainer) {
+            return res.status(404).json({ message: "Trainer not found." });
+        }
+
+        res.status(200).json({ 
+            message: "Profile updated successfully", 
+            trainer 
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            message: "Server error while updating profile.",
+            error: error.message 
+        });
+    }
+});
+
+// Fetch ALL Clients for Trainer
+router.get('/trainer/clients', verifyToken, async (req, res) => {
+  try {
+    console.log('Fetching clients for trainer:', req.user.id);
+    
+    const trainerId = req.user.id;
+    
+    // First verify the trainer exists
+    const trainer = await Trainer.findById(trainerId);
+    if (!trainer) {
+      console.log('Trainer not found:', trainerId);
+      return res.status(404).json({ message: 'Trainer not found' });
+    }
+
+    console.log('Finding bookings for trainer:', trainerId);
+    const bookings = await Booking.find({ trainerId })
+      .populate('clientId', 'username email name')
+      .sort({ date: -1 });
+
+    console.log('Found bookings:', bookings.length);
+    
+    const clientMap = new Map();
+    bookings.forEach(booking => {
+      if (booking.clientId && !clientMap.has(booking.clientId._id.toString())) {
+        clientMap.set(booking.clientId._id.toString(), booking.clientId);
+      }
+    });
+
+    console.log('Unique clients found:', clientMap.size);
+    res.json({ clients: Array.from(clientMap.values()) });
+  } catch (error) {
+    console.error('Detailed error in fetching clients:', error);
+    res.status(500).json({ 
+      message: 'Error fetching clients',
+      error: error.message,
+      stack: error.stack 
+    });
+  }
+});
+
+// Get Bookings for a Trainer
+router.get('/bookings', verifyToken, async (req, res) => {
+    try {
+        const trainerId = req.user.id;
+        
+        // Status filter - default to all non-canceled bookings
+        const status = req.query.status || ['pending', 'confirmed', 'completed'];
+        const statusFilter = Array.isArray(status) ? { $in: status } : status;
+        
+        // Date range filter
+        const dateFilter = {};
+        if (req.query.startDate) {
+            dateFilter.$gte = new Date(req.query.startDate);
+        }
+        if (req.query.endDate) {
+            dateFilter.$lte = new Date(req.query.endDate);
+        }
+        
+        // Build query
+        const query = { trainerId };
+        if (Object.keys(dateFilter).length > 0) {
+            query.sessionTime = dateFilter;
+        }
+        if (status) {
+            query.status = statusFilter;
+        }
+        
+        const bookings = await Booking.find(query)
+            .populate('clientId', 'username email name')
+            .sort({ sessionTime: 1 });
+            
+        res.json({ success: true, bookings });
+    } catch (error) {
+        console.error('Error fetching trainer bookings:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch bookings',
+            error: error.message
+        });
+    }
+});
+
+// Get All Trainers
+router.get("/trainers", verifyToken, async (req, res) => {
+    try {
+        const trainers = await Trainer.find().select("-password");
+        res.status(200).json(trainers);
+    } catch (error) {
+        res.status(500).json({ 
+            message: "Server error while fetching trainers.",
+            error: error.message 
+        });
+    }
+});
 module.exports = router;
