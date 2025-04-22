@@ -2,14 +2,17 @@ const Booking = require("../models/Booking");
 const Payment = require("../models/Payment");
 
 const getOutstandingGymPayments = async (clientId) => {
-  const bookings = await Booking.find({ clientId }).lean();
-  const payments = await Payment.find({ clientId, method: "cash" }).lean();
+  // Get all unpaid bookings
+  const unpaidBookings = await Booking.find({
+      clientId,
+      paymentStatus: { $ne: "paid" }
+  }).lean();
 
-  // Optional: Fetch actual hourly rate from Trainer if dynamic
-  const totalBooked = bookings.length * 50;
-  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  // Calculate total amount due from unpaid bookings
+  const totalDue = unpaidBookings.reduce((sum, booking) => 
+      sum + (booking.sessionCost || 50), 0);
 
-  return totalBooked - totalPaid;
+  return Math.max(0, totalDue);
 };
 
 module.exports = { getOutstandingGymPayments };

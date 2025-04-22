@@ -11,7 +11,7 @@ const Booking = require("../models/Booking");
 const Trainer = require("../models/Trainer");
 const router = express.Router();
 const asyncHandler = require("express-async-handler");
-
+const { getOutstandingGymPayments } = require("../utils/paymentUtils");
 
 // Middleware: Verify Gym Owner Token
 const verifyGymOwnerToken = (req, res, next) => {
@@ -297,78 +297,44 @@ router.post("/accept-cash-payment", verifyGymOwnerToken, verifyGymOwner, async (
             sessionTime: { $lt: new Date() }
         }).sort({ sessionTime: 1 }); // Process oldest bookings first
 
-        if (!unpaidBookings.length) {
-            return res.status(404).json({ message: "No unpaid bookings found for this client." });
-        }
-
         // Record the payment
         const newPayment = new Payment({
             clientId,
             amount: paymentAmount,
             paymentMethod: "cash",
             status: "completed",
-            description: "Cash payment for unpaid balance"
+            description: "Cash payment for unpaid sessions"
         });
         await newPayment.save();
 
-        // Add payment to client's payment history
-        if (!client.payments) {
-            client.payments = [];
-        }
-        client.payments.push(newPayment._id);
-        await client.save();
-
-        // Apply payment to unpaid bookings
+        // Update bookings payment status
         let remainingAmount = paymentAmount;
-        let bookingsUpdated = 0;
-
         for (const booking of unpaidBookings) {
             if (remainingAmount <= 0) break;
-
-            const sessionCost = booking.sessionCost || 50; // Default session cost if not defined
-
+            
+            const sessionCost = booking.sessionCost || 50;
             if (remainingAmount >= sessionCost) {
-                // Mark the booking as paid
-                await Booking.findByIdAndUpdate(booking._id, { paymentStatus: "paid" }, { new: true });
-                bookingsUpdated++;
+                booking.paymentStatus = "paid";
+                await booking.save();
                 remainingAmount -= sessionCost;
-            } else {
-                break; // Stop if the remaining amount is less than the session cost
             }
         }
 
-        // Calculate remaining unpaid balance after payment
-        const remainingUnpaidBookings = await Booking.find({
-            clientId: clientId,
-            paymentStatus: { $ne: "paid" },
-            sessionTime: { $lt: new Date() }
-        });
+        // Calculate new balance
+        const newBalance = await getOutstandingGymPayments(clientId);
 
-        let remainingBalance = 0;
-        remainingUnpaidBookings.forEach(booking => {
-            remainingBalance += booking.sessionCost || 50;
-        });
-
-        // Update the client's balanceDue after payment
-        client.balanceDue = remainingBalance;
+        // Update client's balance
+        client.balanceDue = newBalance;
         await client.save();
-
-        const updatedClient = {
-            _id: client._id,
-            username: client.username,
-            email: client.email,
-            balanceDue: remainingBalance
-        };
 
         res.status(200).json({
             message: "Cash payment accepted successfully!",
             payment: newPayment,
-            client: updatedClient,
-            processed: {
-                initialBalance: paymentAmount,
-                bookingsUpdated,
-                amountApplied: paymentAmount,
-                newBalance: remainingBalance
+            client: {
+                _id: client._id,
+                username: client.username,
+                email: client.email,
+                balanceDue: newBalance
             }
         });
     } catch (error) {
