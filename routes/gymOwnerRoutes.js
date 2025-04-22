@@ -193,155 +193,188 @@ router.post("/clients/add/:clientId", verifyGymOwnerToken, async (req, res) => {
 
 router.get("/unpaid-clients", verifyGymOwnerToken, verifyGymOwner, asyncHandler(async (req, res) => {
     try {
-        // Get all bookings that haven't been paid for
-        const unpaidBookings = await Booking.find({
-            paymentStatus: { $ne: "paid" },
-            sessionTime: { $lt: new Date() } // Only past sessions
-        }).populate('clientId', 'username email');
-
-        // Get all pending cash payments
-        const pendingPayments = await Payment.find({
-            status: "pending",
-            method: "cash"
-        }).populate('clientId', 'username email');
-
-        // Get all clients with active subscriptions that have unpaid amounts
-        const subscriptions = await Subscription.find({
-            status: "active",
-            paymentInfo: { $exists: true, $ne: null }
-        }).populate('clientId', 'username email');
-
-        // Combine all unpaid clients
-        const unpaidClientsMap = new Map();
-
-        // Add clients from unpaid bookings
-        unpaidBookings.forEach(booking => {
-            if (booking.clientId) {
-                unpaidClientsMap.set(booking.clientId._id.toString(), {
-                    _id: booking.clientId._id,
-                    username: booking.clientId.username,
-                    email: booking.clientId.email,
-                    balanceDue: 50, // Default session fee
-                    type: 'unpaid_booking'
-                });
-            }
-        });
-
-        // Add clients with pending payments
-        pendingPayments.forEach(payment => {
-            if (payment.clientId) {
-                const existing = unpaidClientsMap.get(payment.clientId._id.toString());
-                if (existing) {
-                    existing.balanceDue += payment.amount;
-                } else {
-                    unpaidClientsMap.set(payment.clientId._id.toString(), {
-                        _id: payment.clientId._id,
-                        username: payment.clientId.username,
-                        email: payment.clientId.email,
-                        balanceDue: payment.amount,
-                        type: 'pending_payment'
-                    });
-                }
-            }
-        });
-
-        // Add clients with subscription payments due
-        subscriptions.forEach(sub => {
-            if (sub.clientId && sub.amountPaid === 0) {
-                const existing = unpaidClientsMap.get(sub.clientId._id.toString());
-                if (existing) {
-                    existing.balanceDue += sub.amountPaid;
-                } else {
-                    unpaidClientsMap.set(sub.clientId._id.toString(), {
-                        _id: sub.clientId._id,
-                        username: sub.clientId.username,
-                        email: sub.clientId.email,
-                        balanceDue: sub.amountPaid,
-                        type: 'subscription_payment'
-                    });
-                }
-            }
-        });
-
-        // Convert map to array
-        const unpaidClients = Array.from(unpaidClientsMap.values());
-
-        res.status(200).json(unpaidClients);
+      // Create a map to aggregate client data by ID
+      const unpaidClientsMap = new Map();
+      
+      // Get all bookings that haven't been paid for
+      const unpaidBookings = await Booking.find({
+        paymentStatus: { $ne: "paid" },
+        sessionTime: { $lt: new Date() } // Only past sessions
+      }).populate('clientId', 'username email').lean();
+  
+      // Add clients from unpaid bookings with actual session costs
+      for (const booking of unpaidBookings) {
+        if (booking.clientId) {
+          const clientId = booking.clientId._id.toString();
+          const sessionCost = booking.sessionCost || 50; // Use actual session cost with fallback
+          
+          if (unpaidClientsMap.has(clientId)) {
+            // Add to existing balance
+            unpaidClientsMap.get(clientId).balanceDue += sessionCost;
+          } else {
+            // Create new entry
+            unpaidClientsMap.set(clientId, {
+              _id: booking.clientId._id,
+              username: booking.clientId.username,
+              email: booking.clientId.email,
+              balanceDue: sessionCost,
+              type: 'unpaid_booking'
+            });
+          }
+        }
+      }
+  
+      // Get all pending cash payments
+      const pendingPayments = await Payment.find({
+        status: "pending",
+        paymentMethod: "cash"
+      }).populate('clientId', 'username email').lean();
+  
+      // Add clients with pending payments
+      for (const payment of pendingPayments) {
+        if (payment.clientId) {
+          const clientId = payment.clientId._id.toString();
+          
+          if (unpaidClientsMap.has(clientId)) {
+            // Add to existing balance
+            unpaidClientsMap.get(clientId).balanceDue += payment.amount;
+          } else {
+            // Create new entry
+            unpaidClientsMap.set(clientId, {
+              _id: payment.clientId._id,
+              username: payment.clientId.username,
+              email: payment.clientId.email,
+              balanceDue: payment.amount,
+              type: 'pending_payment'
+            });
+          }
+        }
+      }
+  
+      // Get all clients with active subscriptions that have unpaid amounts
+      const subscriptions = await Subscription.find({
+        status: "active",
+        paymentInfo: { $exists: true, $ne: null }
+      }).populate('clientId', 'username email').lean();
+  
+      // Add clients with subscription payments due
+      for (const sub of subscriptions) {
+        if (sub.clientId && sub.amountDue > 0) { // Changed from amountPaid to amountDue
+          const clientId = sub.clientId._id.toString();
+          
+          if (unpaidClientsMap.has(clientId)) {
+            // Add to existing balance
+            unpaidClientsMap.get(clientId).balanceDue += sub.amountDue; // Changed from amountPaid
+          } else {
+            // Create new entry
+            unpaidClientsMap.set(clientId, {
+              _id: sub.clientId._id,
+              username: sub.clientId.username,
+              email: sub.clientId.email,
+              balanceDue: sub.amountDue, // Changed from amountPaid
+              type: 'subscription_payment'
+            });
+          }
+        }
+      }
+  
+      // Convert map to array
+      const unpaidClients = Array.from(unpaidClientsMap.values());
+  
+      // Update balanceDue in User model for each client for consistency
+      for (const client of unpaidClients) {
+        await User.findByIdAndUpdate(client._id, { balanceDue: client.balanceDue });
+      }
+  
+      res.status(200).json(unpaidClients);
     } catch (error) {
-        console.error("Error fetching unpaid clients:", error);
-        res.status(500).json({ 
-            message: "Error fetching unpaid clients.", 
-            error: error.message 
-        });
+      console.error("Error fetching unpaid clients:", error);
+      res.status(500).json({ 
+        message: "Error fetching unpaid clients.", 
+        error: error.message 
+      });
     }
-}));
+  }));
 
 // Gym Owner Accepts Cash Payment
 router.post("/accept-cash-payment", verifyGymOwnerToken, verifyGymOwner, async (req, res) => {
     try {
-        const { clientId, amount } = req.body;
-        const paymentAmount = parseFloat(amount);
-
-        if (!paymentAmount || paymentAmount <= 0) {
-            return res.status(400).json({ message: "Invalid payment amount" });
-        }
-
-        // Check client exists
-        const client = await User.findById(clientId);
-        if (!client) return res.status(404).json({ message: "Client not found." });
-
-        // Get unpaid bookings for the client
-        const unpaidBookings = await Booking.find({
-            clientId: clientId,
-            paymentStatus: { $ne: "paid" },
-            sessionTime: { $lt: new Date() }
-        }).sort({ sessionTime: 1 }); // Process oldest bookings first
-
-        // Record the payment
-        const newPayment = new Payment({
-            clientId,
-            amount: paymentAmount,
-            paymentMethod: "cash",
-            status: "completed",
-            description: "Cash payment for unpaid sessions"
-        });
-        await newPayment.save();
-
-        // Update bookings payment status
-        let remainingAmount = paymentAmount;
-        for (const booking of unpaidBookings) {
-            if (remainingAmount <= 0) break;
-            
-            const sessionCost = booking.sessionCost || 50;
-            if (remainingAmount >= sessionCost) {
-                booking.paymentStatus = "paid";
-                await booking.save();
-                remainingAmount -= sessionCost;
-            }
-        }
-
-        // Calculate new balance
-        const newBalance = await getOutstandingGymPayments(clientId);
-
-        // Update client's balance
-        client.balanceDue = newBalance;
-        await client.save();
-
-        res.status(200).json({
-            message: "Cash payment accepted successfully!",
-            payment: newPayment,
-            client: {
-                _id: client._id,
-                username: client.username,
-                email: client.email,
-                balanceDue: newBalance
-            }
-        });
-    } catch (error) {
-        console.error("Error processing cash payment:", error);
-        res.status(500).json({ message: "Error processing cash payment.", error: error.message });
+      const { clientId, amount } = req.body;
+      const paymentAmount = parseFloat(amount);
+  
+      if (!paymentAmount || paymentAmount <= 0) {
+        return res.status(400).json({ message: "Invalid payment amount" });
+      }
+  
+      // Check client exists
+      const client = await User.findById(clientId);
+      if (!client) return res.status(404).json({ message: "Client not found." });
+  
+       // Get the current outstanding balance
+    const currentBalance = await getOutstandingGymPayments(clientId);
+    
+    // Ensure we're not paying more than what's owed
+    if (paymentAmount > currentBalance) {
+      return res.status(400).json({ 
+        message: "Payment amount exceeds outstanding balance",
+        currentBalance
+      });
     }
-});
+    
+      // Get unpaid bookings for the client
+      const unpaidBookings = await Booking.find({
+        clientId: clientId,
+        paymentStatus: { $ne: "paid" },
+        sessionTime: { $lt: new Date() }
+      }).sort({ sessionTime: 1 }); // Process oldest bookings first
+  
+      // Record the payment
+      const newPayment = new Payment({
+        clientId,
+        amount: paymentAmount,
+        paymentMethod: "cash", // Changed from paymentMethod to match schema
+        status: "completed",
+        description: "Cash payment for unpaid sessions"
+      });
+      await newPayment.save();
+  
+      // Update bookings payment status
+      let remainingAmount = paymentAmount;
+      for (const booking of unpaidBookings) {
+        if (remainingAmount <= 0) break;
+        
+        const sessionCost = booking.sessionCost || 50;
+        if (remainingAmount >= sessionCost) {
+          booking.paymentStatus = "paid";
+          await booking.save();
+          remainingAmount -= sessionCost;
+        }
+      }
+  
+      // Calculate new balance
+      const newBalance = await getOutstandingGymPayments(clientId);
+  
+      // Update client's balance
+      await User.findByIdAndUpdate(clientId, { balanceDue: newBalance });
+  
+      // Get updated client data
+      const updatedClient = await User.findById(clientId);
+  
+      res.status(200).json({
+        message: "Cash payment accepted successfully!",
+        payment: newPayment,
+        client: {
+          _id: updatedClient._id,
+          username: updatedClient.username,
+          email: updatedClient.email,
+          balanceDue: newBalance
+        }
+      });
+    } catch (error) {
+      console.error("Error processing cash payment:", error);
+      res.status(500).json({ message: "Error processing cash payment.", error: error.message });
+    }
+  });
 
 // Remove a Client from Management
 router.delete("/clients/remove/:clientId", verifyGymOwnerToken, async (req, res) => {
