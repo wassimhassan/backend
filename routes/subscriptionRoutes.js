@@ -301,28 +301,28 @@ router.post("/purchase", verifyToken, async (req, res) => {
         // 🔹 Set default transactionId for cash payments
         const finalTransactionId = method === "cash" ? "N/A" : transactionId;
 
-        // 🔹 Get Subscription Benefits
-        const { sessionDiscount, maxBookingsPerMonth } = SUBSCRIPTION_BENEFITS[planType];
+        // In the purchase route
+const { sessionDiscount, maxBookingsPerMonth } = SUBSCRIPTION_BENEFITS[planType];
 
-        // 🔹 Create a new subscription with pending status
-        const newSubscription = new Subscription({
-            clientId: client._id,
-            planType,
-            startDate: new Date(),  // Set the current date as the start date
-            endDate: new Date(endDate),
-            renewalDate: new Date(),  // Set the renewal date to the same date as the activation date (startDate)
-            status: method === "cash" ? "pending" : "active",  // Cash requires gym owner approval
-            amountPaid: 0,  // Payment is recorded separately
-            paymentInfo: {
-                method, 
-                transactionId: finalTransactionId, 
-                date: new Date(),  // Set the current date as the payment date
-                amount: 0  // Payment amount (you can adjust this logic if needed)
-            },
-            sessionDiscount,
-            maxBookingsPerMonth,
-            gymOwnerId: req.user.id  // Set gymOwnerId to the logged-in gym owner's ID
-        });
+const newSubscription = new Subscription({
+    clientId: client._id,
+    planType,
+    startDate: new Date(),
+    endDate: new Date(endDate),
+    renewalDate: new Date(),
+    status: method === "cash" ? "pending" : "active",
+    amountPaid: 0,
+    paymentInfo: {
+        method, 
+        transactionId: finalTransactionId, 
+        date: new Date(),
+        amount: 0
+    },
+    // Add these two critical lines:
+    sessionsRemaining: maxBookingsPerMonth,
+    totalSessions: maxBookingsPerMonth,
+    gymOwnerId: req.user.id
+});
 
         console.log("✅ Creating Subscription:", newSubscription);
         await newSubscription.save();
@@ -356,24 +356,20 @@ router.get("/subscription-status", verifyToken, async (req, res) => {
             return res.status(200).json({ hasActiveSubscription: false });
         }
 
-        // Calculate start and end of the current month
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-        // Get bookings for the client with active subscription within this month
-        const subscriptionBookings = await Booking.countDocuments({
-            clientId,
-            paymentMethod: "subscription",
-            sessionTime: { $gte: startOfMonth, $lte: endOfMonth }
+        // No need to recalculate - use the values from the database directly
+        console.log("Subscription retrieved:", {
+            id: subscription._id,
+            sessionsRemaining: subscription.sessionsRemaining,
+            totalSessions: subscription.totalSessions
         });
-
-        // Calculate remaining sessions
-        const remainingSessions = subscription.maxBookingsPerMonth - subscriptionBookings;
 
         return res.status(200).json({
             hasActiveSubscription: true,
-            subscription,
-            remainingSessions
+            subscription: {
+                ...subscription._doc,
+                remainingSessions: subscription.sessionsRemaining,
+                totalSessions: subscription.totalSessions
+            }
         });
     } catch (error) {
         console.error("❌ Error checking subscription status:", error);
