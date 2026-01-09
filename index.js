@@ -26,12 +26,14 @@ app.use(express.json()); // enables parsing JSON in requests.
 mongoose.set("strictQuery", false);
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+if (process.env.NODE_ENV !== "test") {
+  mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("MongoDB connected"))
     .catch(err => {
-        process.exit(1); // Exit process if DB connection fails
+      console.error("MongoDB connection error:", err.message);
+      process.exit(1);
     });
-
+}
 // Root Route (Useful for API health check)
 app.get("/", (req, res) => {
     res.status(200).json({ message: "Welcome to the GymApp API 🚀" });
